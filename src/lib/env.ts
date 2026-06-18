@@ -26,3 +26,13 @@ export const env = {
 } as const;
 
 export const isProd = process.env.NODE_ENV === "production";
+
+// 운영 런타임에서 약한 세션 시크릿이면 부팅 금지 (쿠키 위조 방지).
+// 빌드 단계(phase-production-build)는 시크릿이 주입되지 않을 수 있으므로 제외.
+const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+if (isProd && !isBuildPhase) {
+  const s = process.env.SESSION_SECRET;
+  if (!s || s === "dev-change-me-please" || s.length < 16) {
+    throw new Error("SESSION_SECRET must be set to a strong value (>=16 chars) in production.");
+  }
+}

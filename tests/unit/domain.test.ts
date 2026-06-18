@@ -57,7 +57,10 @@ describe("writePrimaryLabel", () => {
   it("모드별 버튼 라벨", () => {
     expect(writePrimaryLabel("morningPlan", null)).toBe("계획 제출");
     expect(writePrimaryLabel("afternoonClose", null)).toBe("최종 제출");
-    expect(writePrimaryLabel("nightClose", "yes")).toBe("야간 계획 저장");
+    // 오후 마감에서 야간 '있음' → 제출이 아니라 야간 계획 저장(2단계)
+    expect(writePrimaryLabel("afternoonClose", "yes")).toBe("야간 계획 저장");
+    // 야간 마감 모드는 항상 최종 제출
+    expect(writePrimaryLabel("nightClose", "yes")).toBe("최종 제출");
     expect(writePrimaryLabel("nightClose", "no")).toBe("최종 제출");
     expect(writePrimaryLabel("rejected", null)).toBe("재제출하기");
   });

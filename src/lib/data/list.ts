@@ -33,10 +33,12 @@ export async function listScopeReports(opts: {
        LEFT JOIN groups g ON g.id = u.group_id
        LEFT JOIN daily_reports r ON r.user_id = u.id AND r.report_date = $1
        LEFT JOIN (
-         SELECT report_id, count(*) AS total,
-                count(*) FILTER (WHERE status='완결') AS done,
-                count(*) FILTER (WHERE status='지연') AS delayed
-           FROM tasks GROUP BY report_id
+         SELECT t.report_id, count(*) AS total,
+                count(*) FILTER (WHERE t.status='완결') AS done,
+                count(*) FILTER (WHERE t.status='지연') AS delayed
+           FROM tasks t JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind <> 'plan'
+          GROUP BY t.report_id
        ) tc ON tc.report_id = r.id
       WHERE ${where}
       ORDER BY u.name`,
@@ -63,10 +65,12 @@ export async function listMyReports(userId: number, limit = 30): Promise<EmpRow[
             COALESCE(tc.total,0) AS total, COALESCE(tc.done,0) AS done, COALESCE(tc.delayed,0) AS delayed
        FROM daily_reports r
        LEFT JOIN (
-         SELECT report_id, count(*) AS total,
-                count(*) FILTER (WHERE status='완결') AS done,
-                count(*) FILTER (WHERE status='지연') AS delayed
-           FROM tasks GROUP BY report_id
+         SELECT t.report_id, count(*) AS total,
+                count(*) FILTER (WHERE t.status='완결') AS done,
+                count(*) FILTER (WHERE t.status='지연') AS delayed
+           FROM tasks t JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind <> 'plan'
+          GROUP BY t.report_id
        ) tc ON tc.report_id = r.id
       WHERE r.user_id = $1
       ORDER BY r.report_date DESC

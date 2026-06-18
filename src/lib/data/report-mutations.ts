@@ -49,11 +49,24 @@ export interface AddTaskInput {
 /** 편집 가능한(잠기지 않은) 섹션에만 업무 추가 */
 export async function addTask(reportId: number, input: AddTaskInput): Promise<{ id: number }> {
   return tx(async (c) => {
-    const sec = await c.query<{ id: number; locked: boolean }>(
-      `SELECT id, locked FROM report_sections WHERE report_id=$1 AND kind=$2`,
+    const rep = await c.query<{ status: string }>(
+      `SELECT status FROM daily_reports WHERE id=$1 FOR UPDATE`,
+      [reportId],
+    );
+    const status = rep.rows[0]?.status;
+    if (!status) throw new Error("NOT_FOUND");
+    // 제출 이후(검수대기/승인/제출완료/재제출) 보고서엔 추가 불가
+    if (status === "검수대기" || status === "승인" || status === "제출완료" || status === "재제출")
+      throw new Error("LOCKED_SECTION");
+
+    const sec = await c.query<{ id: number; locked: boolean; status: string }>(
+      `SELECT id, locked, status FROM report_sections WHERE report_id=$1 AND kind=$2`,
       [reportId, input.sectionKind],
     );
     let sectionId = sec.rows[0]?.id;
+    // 반려 사이클: '재작성'으로 지목된 기존 섹션에만 추가 가능(신규 섹션 생성 금지)
+    if (status === "반려" && (!sectionId || sec.rows[0].status !== "재작성"))
+      throw new Error("LOCKED_SECTION");
     if (!sectionId) sectionId = await ensureSection(c, reportId, input.sectionKind);
     else if (sec.rows[0].locked) throw new Error("LOCKED_SECTION");
 
@@ -139,10 +152,23 @@ export async function advanceReport(
 ): Promise<{ mode: string; submitted: boolean }> {
   return tx(async (c) => {
     const { report, secMap } = await loadState(c, reportId);
+
+    // 휴가 우회 방지: 이미 마감된 시간대가 있거나 진행된 보고서엔 vacationType만으로 휴가 전환 불가
+    const anyClosed = Object.values(secMap).some((s) => s === "마감완료");
+    if (
+      input.vacationType &&
+      (anyClosed || (report.status !== "미작성" && report.status !== "작성중"))
+    ) {
+      throw new Error("VACATION_NOT_ALLOWED");
+    }
+
     const isVac = report.is_vacation || !!input.vacationType;
     const mode = computeWriteMode(report.status, isVac, secMap);
 
-    // 공통 필드 저장
+    // 읽기 전용(제출/검수중/승인) 보고서는 어떤 변경도 적용하지 않음
+    if (mode === "view") return { mode, submitted: false };
+
+    // 공통 필드 저장 (편집 가능 모드에서만)
     if (input.dailyComment !== undefined)
       await c.query(`UPDATE daily_reports SET daily_comment=$2, updated_at=now() WHERE id=$1`, [
         reportId,
@@ -196,9 +222,10 @@ export async function advanceReport(
         submitted = true;
         break;
       case "rejected":
+        // 재제출 시 잠기지 않은 모든 섹션을 일괄 잠금(재작성 우회 신규 섹션 포함)
         await c.query(
           `UPDATE report_sections SET status='마감완료', locked=true, closed_at=now()
-            WHERE report_id=$1 AND status='재작성'`,
+            WHERE report_id=$1 AND locked=false`,
           [reportId],
         );
         await submit("resubmitted");

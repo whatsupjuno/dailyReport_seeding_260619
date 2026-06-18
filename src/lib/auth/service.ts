@@ -28,7 +28,7 @@ export async function verifyOtp(loginId: string, otp: string): Promise<VerifyRes
   const user = await findUserByLoginId(loginId);
   if (!user || !user.active)
     return { ok: false, error: "존재하지 않는 아이디입니다. 다시 확인해 주세요." };
-  if (!user.login_code || !safeEqual(otp, user.login_code))
+  if (!user.login_code || !safeEqual(otp.trim(), user.login_code.trim()))
     return { ok: false, error: "인증번호가 일치하지 않습니다. 다시 입력해 주세요." };
   return { ok: true, userId: user.id };
 }

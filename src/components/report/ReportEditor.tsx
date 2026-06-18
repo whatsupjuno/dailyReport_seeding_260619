@@ -156,7 +156,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   }
 
   return (
-    <div>
+    <div data-report-id={view.reportId} data-report-mode={mode}>
       {/* 페이지 헤더 */}
       <div style={{ background: "#fff", borderBottom: "1px solid #E2E5EB", padding: "14px 24px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <span style={{ fontSize: 17, fontWeight: 700 }}>일일 업무 보고서</span>

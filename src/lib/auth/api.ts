@@ -16,3 +16,12 @@ export function forbidden() {
 export function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: message }, { status: 400 });
 }
+export function conflict(message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status: 409 });
+}
+
+/** 경로 파라미터를 양의 정수로 파싱. 아니면 null */
+export function parseId(raw: string): number | null {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}

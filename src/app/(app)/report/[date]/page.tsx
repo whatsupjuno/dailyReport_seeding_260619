@@ -1,19 +1,36 @@
+import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/guard";
 import {
   getOrCreateReport,
+  getReportByUserDate,
   loadFullReport,
   sectionStatusMap,
   type TaskRow,
 } from "@/lib/data/reports";
 import { computeWriteMode } from "@/lib/domain/mode";
-import { formatKoreanDate } from "@/lib/date";
+import { formatKoreanDate, todayKstISO } from "@/lib/date";
 import ReportEditor, { type ReportView } from "@/components/report/ReportEditor";
+
+function isValidIsoDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(s + "T00:00:00Z");
+  return !Number.isNaN(t);
+}
 
 export default async function ReportPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params;
+  if (!isValidIsoDate(date)) notFound();
   const user = await requireUser();
 
-  const reportId = await getOrCreateReport(user.id, date);
+  // 오늘 보고서만 자동 생성. 과거/타 날짜는 기존 것만 조회(임의 보고서 양산 방지)
+  let reportId: number;
+  if (date === todayKstISO()) {
+    reportId = await getOrCreateReport(user.id, date);
+  } else {
+    const existing = await getReportByUserDate(user.id, date);
+    if (!existing) notFound();
+    reportId = existing.id;
+  }
   const full = await loadFullReport(reportId);
   if (!full) return <div style={{ padding: 24 }}>보고서를 불러오지 못했습니다.</div>;
 

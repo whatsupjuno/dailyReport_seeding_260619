@@ -15,9 +15,14 @@ test("검수 승인: 박서준 보고서 승인 → 큐에서 사라짐", async 
   await expect(page.getByTestId("review-queue")).toContainText("박서준");
   await page.getByTestId("review-queue").getByText("박서준").click();
   await expect(page.getByTestId("review-status")).toBeVisible();
+  const reportId = page.url().split("/").pop();
   await page.getByTestId("approve").click();
   await page.waitForURL(/\/review$/);
   await expect(page.getByTestId("review-queue")).not.toContainText("박서준");
+
+  // 이미 승인된 보고서 재승인은 409 (상태 가드)
+  const re = await page.request.post(`/api/reviews/${reportId}/approve`);
+  expect(re.status()).toBe(409);
 });
 
 test("검수 반려: 정유나 보고서 오후 지목 반려", async ({ page }) => {

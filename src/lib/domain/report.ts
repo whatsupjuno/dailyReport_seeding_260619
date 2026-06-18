@@ -112,9 +112,10 @@ export function writePrimaryLabel(mode: WriteMode, nightBranch: "yes" | "no" | n
     case "morningClose":
       return "오전 마감하기";
     case "afternoonClose":
-      return "최종 제출";
-    case "nightClose":
+      // 야간 '있음' → 제출이 아니라 야간 섹션 생성(2단계). '없음' → 최종 제출.
       return nightBranch === "yes" ? "야간 계획 저장" : "최종 제출";
+    case "nightClose":
+      return "최종 제출";
     case "view":
       return "제출 완료";
     case "rejected":
