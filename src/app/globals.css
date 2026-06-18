@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+
+/* ===== 디자인 토큰 (Seeding 아티팩트 팔레트 계승) ===== */
+@theme {
+  --font-sans: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+
+  --color-bg: #f7f8fa;
+  --color-ink: #1a1f2b;
+  --color-muted: #6b7280;
+  --color-faint: #9aa1ae;
+  --color-line: #e2e5eb;
+  --color-line-strong: #cbd0d9;
+
+  --color-brand: #3b5bdb;
+  --color-brand-ink: #2f49b0;
+  --color-brand-bg: #eef2ff;
+  --color-brand-line: #c7d2fe;
+
+  /* 상태색 */
+  --color-done: #1f9254;
+  --color-done-bg: #e7f6ec;
+  --color-done-line: #bbe5c8;
+  --color-progress: #2563eb;
+  --color-progress-bg: #e6eefd;
+  --color-progress-line: #bbd0f7;
+  --color-delay: #dc2626;
+  --color-delay-bg: #fcebeb;
+  --color-delay-line: #f5c2c2;
+  --color-soon: #d97706;
+  --color-soon-bg: #fdf3e5;
+  --color-soon-line: #f6d9a8;
+  --color-wait: #b7860b;
+  --color-wait-bg: #fbf4da;
+  --color-wait-line: #efe0a6;
+  --color-off: #6b7280;
+  --color-off-bg: #f1f2f4;
+  --color-off-line: #d9dce2;
+  --color-ai: #7c5cfc;
+  --color-ai-bg: #f3f0fe;
+  --color-ai-line: #e4dcfb;
+}
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd0d9;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.7s linear infinite;
+}
