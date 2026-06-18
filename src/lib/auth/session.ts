@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { env, isProd } from "../env";
+import { env } from "../env";
 import { query, queryOne } from "../db";
 import { getUserById, type UserRow } from "../data/users";
 import { randomToken, signValue, verifySignedValue } from "./crypto";
@@ -19,7 +19,8 @@ export async function createSession(userId: number): Promise<string> {
   jar.set(COOKIE, signValue(token, env.sessionSecret), {
     httpOnly: true,
     sameSite: "lax",
-    secure: isProd,
+    // HTTPS로 서빙될 때만 Secure. (현재 HTTP(IP) 배포에서 Secure면 브라우저가 쿠키를 버림)
+    secure: env.appBaseUrl.startsWith("https"),
     path: "/",
     expires,
   });
