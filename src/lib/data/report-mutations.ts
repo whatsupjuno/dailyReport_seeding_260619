@@ -246,6 +246,63 @@ export async function advanceReport(
   });
 }
 
+const SUBMITTED = ["검수대기", "승인", "제출완료", "재제출"];
+
+/** 커뮤니케이션 기록 추가 (제출 전 보고서에만) */
+export async function addCommunication(
+  reportId: number,
+  input: { type: string; counterpart: string; time?: string | null; summary: string },
+): Promise<{ id: number }> {
+  return tx(async (c) => {
+    const rep = await c.query<{ status: string }>(
+      `SELECT status FROM daily_reports WHERE id=$1 FOR UPDATE`,
+      [reportId],
+    );
+    const status = rep.rows[0]?.status;
+    if (!status) throw new Error("NOT_FOUND");
+    if (SUBMITTED.includes(status)) throw new Error("LOCKED_SECTION");
+    const r = await c.query<{ id: number }>(
+      `INSERT INTO communications(report_id, comm_type, counterpart, occurred_at, summary)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [reportId, input.type, input.counterpart, input.time ?? null, input.summary],
+    );
+    await c.query(`UPDATE daily_reports SET no_communication=false WHERE id=$1`, [reportId]);
+    await touch(c, reportId);
+    return { id: r.rows[0].id };
+  });
+}
+
+/** 임시저장: 제출/전이 없이 일일코멘트·야간사유·커뮤없음 플래그만 저장 (제출 전 보고서에만) */
+export async function saveDraft(
+  reportId: number,
+  input: { dailyComment?: string | null; nightReason?: string | null; noCommunication?: boolean },
+): Promise<void> {
+  return tx(async (c) => {
+    const rep = await c.query<{ status: string }>(
+      `SELECT status FROM daily_reports WHERE id=$1 FOR UPDATE`,
+      [reportId],
+    );
+    const status = rep.rows[0]?.status;
+    if (!status) throw new Error("NOT_FOUND");
+    if (SUBMITTED.includes(status) || status === "승인") throw new Error("LOCKED_SECTION");
+    if (input.dailyComment !== undefined)
+      await c.query(`UPDATE daily_reports SET daily_comment=$2, updated_at=now() WHERE id=$1`, [
+        reportId,
+        input.dailyComment,
+      ]);
+    if (input.nightReason !== undefined)
+      await c.query(`UPDATE daily_reports SET night_reason=$2, updated_at=now() WHERE id=$1`, [
+        reportId,
+        input.nightReason,
+      ]);
+    if (input.noCommunication !== undefined)
+      await c.query(`UPDATE daily_reports SET no_communication=$2 WHERE id=$1`, [
+        reportId,
+        input.noCommunication,
+      ]);
+  });
+}
+
 async function touch(c: PoolClient, reportId: number) {
   await c.query(
     `UPDATE daily_reports SET status = CASE WHEN status='미작성' THEN '작성중' ELSE status END, updated_at=now() WHERE id=$1`,

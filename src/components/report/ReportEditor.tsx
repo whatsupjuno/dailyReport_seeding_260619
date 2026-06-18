@@ -77,6 +77,11 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const [dailyComment, setDailyComment] = useState(view.dailyComment ?? "");
   const [vacationMode, setVacationMode] = useState(view.mode === "vacation");
   const [vacationType, setVacationType] = useState("연차");
+  const [commType, setCommType] = useState("통화");
+  const [commWho, setCommWho] = useState("");
+  const [commTime, setCommTime] = useState("");
+  const [commSummary, setCommSummary] = useState("");
+  const [noComm, setNoComm] = useState(view.noCommunication);
 
   const mode = view.mode;
   const editable =
@@ -86,6 +91,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const stepper = stepperFor(mode);
   const primaryLabel = writePrimaryLabel(mode, nightBranch);
   const readOnly = mode === "view";
+  const commEditable = (mode === "afternoonClose" || mode === "nightClose") && !vacationMode;
 
   async function call(url: string, body: unknown, method = "POST") {
     setBusy(true);
@@ -132,6 +138,41 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   async function closeTask(taskId: number) {
     const ok = await call(`/api/tasks/${taskId}/close`, {});
     if (ok) router.refresh();
+  }
+
+  async function addComm() {
+    if (!commWho.trim() || !commSummary.trim()) {
+      alert("상대와 요약을 입력해 주세요.");
+      return;
+    }
+    const ok = await call(`/api/reports/${view.reportId}/communications`, {
+      type: commType,
+      counterpart: commWho,
+      time: commTime || null,
+      summary: commSummary,
+    });
+    if (ok) {
+      setCommWho("");
+      setCommTime("");
+      setCommSummary("");
+      setNoComm(false);
+      router.refresh();
+    }
+  }
+
+  async function saveDraft() {
+    const ok = await call(
+      `/api/reports/${view.reportId}`,
+      { dailyComment, nightReason: nightReason || null, noCommunication: noComm },
+      "PATCH",
+    );
+    if (ok) alert("임시저장되었습니다.");
+  }
+
+  async function toggleNoComm() {
+    const next = !noComm;
+    setNoComm(next);
+    await call(`/api/reports/${view.reportId}`, { noCommunication: next }, "PATCH");
   }
 
   async function primary() {
@@ -320,16 +361,38 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           </div>
         )}
 
-        {/* 커뮤니케이션 (읽기) */}
-        {view.comms.length > 0 && (
-          <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", marginBottom: 16 }}>
+        {/* 커뮤니케이션 기록 */}
+        {(commEditable || view.comms.length > 0) && (
+          <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", marginBottom: 16 }} data-testid="comm-section">
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>커뮤니케이션 기록</div>
             {view.comms.map((c) => (
-              <div key={c.id} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: "1px solid #F2F3F6" }}>
+              <div key={c.id} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: "1px solid #F2F3F6" }} data-testid="comm-row">
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 9999, padding: "3px 9px", flex: "none" }}>{c.type}</span>
-                <div><div style={{ fontSize: 13 }}><strong>{c.counterpart}</strong> · <span className="tnum" style={{ color: "#6B7280" }}>{c.time}</span></div><div style={{ fontSize: 13, color: "#3A4150" }}>{c.summary}</div></div>
+                <div><div style={{ fontSize: 13 }}><strong>{c.counterpart}</strong>{c.time ? <> · <span className="tnum" style={{ color: "#6B7280" }}>{c.time}</span></> : null}</div><div style={{ fontSize: 13, color: "#3A4150" }}>{c.summary}</div></div>
               </div>
             ))}
+            {commEditable && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <select value={commType} onChange={(e) => setCommType(e.target.value)} style={{ ...inp, width: 90, flex: "none" }} data-testid="comm-type">
+                    {["통화", "메일", "회의", "카톡", "구두"].map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                  <input value={commWho} onChange={(e) => setCommWho(e.target.value)} placeholder="상대" data-testid="comm-who" style={{ ...inp, flex: 1, minWidth: 90 }} />
+                  <select value={commTime} onChange={(e) => setCommTime(e.target.value)} style={{ ...inp, width: 110, flex: "none" }}>
+                    <option value="">시각</option>
+                    {TIME_OPTS.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <input value={commSummary} onChange={(e) => setCommSummary(e.target.value)} placeholder="요약 (예: 환불 정책 변경분 공유)" data-testid="comm-summary" style={{ ...inp, flex: 1 }} />
+                  <button onClick={addComm} disabled={busy} data-testid="comm-add" style={btnPrimary}>추가</button>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={noComm} onChange={toggleNoComm} data-testid="no-comm" />
+                  <span style={{ fontSize: 13, color: "#3A4150" }}>오늘 커뮤니케이션 없음</span>
+                </label>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -339,6 +402,11 @@ export default function ReportEditor({ view }: { view: ReportView }) {
         <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,.94)", borderTop: "1px solid #E2E5EB", padding: "12px 24px", display: "flex", gap: 12 }}>
           <div style={{ maxWidth: 808, width: "100%", margin: "0 auto", display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1 }} />
+            {!vacationMode && (
+              <button onClick={saveDraft} disabled={busy} data-testid="save-draft" style={{ height: 44, padding: "0 18px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>
+                임시저장
+              </button>
+            )}
             <button onClick={primary} disabled={busy} data-testid="primary-action" style={{ height: 44, padding: "0 22px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>
               {vacationMode ? "휴가로 제출" : primaryLabel}
             </button>
