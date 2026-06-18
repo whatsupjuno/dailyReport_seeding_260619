@@ -196,6 +196,11 @@ export async function advanceReport(
         submitted = true;
         break;
       case "rejected":
+        await c.query(
+          `UPDATE report_sections SET status='마감완료', locked=true, closed_at=now()
+            WHERE report_id=$1 AND status='재작성'`,
+          [reportId],
+        );
         await submit("resubmitted");
         submitted = true;
         break;

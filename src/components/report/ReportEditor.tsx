@@ -79,7 +79,10 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const [vacationType, setVacationType] = useState("연차");
 
   const mode = view.mode;
-  const editable = new Set(editableSections(mode, nightBranch));
+  const editable =
+    mode === "rejected"
+      ? new Set(view.sections.filter((s) => s.status === "재작성").map((s) => s.kind))
+      : new Set(editableSections(mode, nightBranch));
   const stepper = stepperFor(mode);
   const primaryLabel = writePrimaryLabel(mode, nightBranch);
   const readOnly = mode === "view";
