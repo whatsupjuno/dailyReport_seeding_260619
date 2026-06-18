@@ -32,3 +32,7 @@ pnpm-debug.log*
 
 # ===== local design reference (decoded artifact, not source) =====
 _design_decoded.html
+
+# ts build info
+tsconfig.tsbuildinfo
+*.tsbuildinfo

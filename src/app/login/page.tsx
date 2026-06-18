@@ -212,7 +212,7 @@ export default function LoginPage() {
                   color: "#3B5BDB",
                 }}
               >
-                {sent ? "인증번호 재발송" : "인증번호 받기"}
+                {sent ? "인증번호 다시 보기" : "인증번호 받기"}
               </button>
             </div>
             <div role="group" aria-label="인증번호 4자리" style={{ display: "flex", gap: 10 }}>
@@ -245,11 +245,11 @@ export default function LoginPage() {
             </div>
             {sent && (
               <div style={{ fontSize: 12, color: "#1F9254", marginTop: 8 }} data-testid="otp-sent">
-                인증번호를 메일로 보냈어요.
+                고정 인증번호를 입력해 주세요.
                 {devOtp && (
                   <span data-testid="dev-otp" style={{ color: "#9AA1AE" }}>
                     {" "}
-                    (개발용: {devOtp})
+                    (인증번호: {devOtp})
                   </span>
                 )}
               </div>
@@ -284,7 +284,7 @@ export default function LoginPage() {
               textAlign: "center",
             }}
           >
-            인증번호는 발송된 보고 안내 메일에서 확인할 수 있습니다.
+            인증번호는 관리자에게 발급받은 고정 코드입니다. (OTP 자동 발급은 추후 제공)
           </div>
         </div>
         <div style={{ textAlign: "center", fontSize: 12, color: "#9AA1AE", marginTop: 20 }}>

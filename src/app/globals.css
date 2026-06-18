@@ -87,3 +87,19 @@ body {
 .spin {
   animation: spin 0.7s linear infinite;
 }
+
+/* 반응형 표시 분기 (디자인 720px) */
+.pc-only {
+  display: block;
+}
+.sm-only {
+  display: none;
+}
+@media (max-width: 720px) {
+  .pc-only {
+    display: none !important;
+  }
+  .sm-only {
+    display: block !important;
+  }
+}
