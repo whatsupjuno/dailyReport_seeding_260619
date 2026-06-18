@@ -1,5 +1,8 @@
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Pool, types, type PoolClient, type QueryResultRow } from "pg";
 import { env } from "./env";
+
+// DATE(oid 1082)를 JS Date가 아닌 'YYYY-MM-DD' 문자열 그대로 반환 (KST 경계/포맷 안전)
+types.setTypeParser(1082, (v: string) => v);
 
 // 개발 중 HMR로 Pool이 중복 생성되는 것 방지 (globalThis 캐시)
 const g = globalThis as unknown as { __seedingPool?: Pool };

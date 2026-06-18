@@ -186,22 +186,30 @@ async function main() {
       events: [{ kind: "submitted", actor: "jung.yuna" }],
     });
 
-    // 박서준: 작성중 (오전 계획만 잡힘) — 목록 변형
+    // 박서준: 검수대기 (개발팀 두 번째 검수 대상 — 승인 e2e용)
     await makeReport({
       login: "park.seojun",
-      status: "작성중",
+      status: "검수대기",
+      submitted: true,
+      dailyComment: "주문 취소 플로우 리팩터 완료, 배포 점검은 내일 진행 예정.",
       sections: [
         {
-          kind: "plan",
+          kind: "morning",
           status: "마감완료",
           locked: true,
           tasks: [
-            { project: "주문 도메인", title: "주문 취소 플로우 리팩터", status: "진행중", plannedStart: "10:00", plannedMin: 120 },
-            { title: "배포 파이프라인 점검", status: "계획", plannedStart: "14:00", plannedMin: 60 },
+            { project: "주문 도메인", title: "주문 취소 플로우 리팩터", status: "완결", plannedMin: 120, actualMin: 110 },
+            { title: "배포 파이프라인 점검", status: "완결", plannedMin: 60, actualMin: 60 },
           ],
         },
-        { kind: "morning", status: "작성중", locked: false, tasks: [] },
+        {
+          kind: "afternoon",
+          status: "마감완료",
+          locked: true,
+          tasks: [{ project: "주문 도메인", title: "주문 도메인 통합 테스트 보강", status: "진행중" }],
+        },
       ],
+      events: [{ kind: "submitted", actor: "park.seojun" }],
     });
 
     await c.query("COMMIT");
