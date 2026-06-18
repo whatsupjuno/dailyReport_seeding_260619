@@ -1,0 +1,34 @@
+# ===== secrets / env (NEVER commit) =====
+.env
+.env.*
+!.env.example
+
+# ===== node / next =====
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+.turbo/
+
+# ===== playwright / test =====
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# ===== logs / os =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+
+# ===== editor =====
+.vscode/
+.idea/
+
+# ===== local design reference (decoded artifact, not source) =====
+_design_decoded.html
