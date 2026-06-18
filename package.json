@@ -9,6 +9,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:reset": "tsx scripts/migrate.ts --reset",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed-prod": "tsx scripts/seed-prod.ts",
+    "dispatch": "tsx scripts/dispatch.ts",
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:e2e": "playwright test"
