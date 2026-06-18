@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { statusMeta, type SectionKind, type WriteMode } from "@/lib/domain/status";
 import { editableSections, stepperFor, writePrimaryLabel } from "@/lib/domain/report";
 
+export interface TaskAttachment {
+  id: number;
+  kind: "file" | "url";
+  fileName: string | null;
+  url: string | null;
+  comment: string | null;
+}
 export interface ReportTask {
   id: number;
   project: string | null;
@@ -14,6 +21,7 @@ export interface ReportTask {
   planned_duration_min: number | null;
   actual_duration_min: number | null;
   hold_reason: string | null;
+  attachments: TaskAttachment[];
 }
 export interface ReportSection {
   id: number;
@@ -38,6 +46,7 @@ export interface ReportView {
   sections: ReportSection[];
   comms: Array<{ id: number; type: string; counterpart: string; time: string | null; summary: string }>;
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
+  recentTasks: Array<{ name: string; project: string | null; planned: number | null }>;
 }
 
 const SECTION_NAME: Record<SectionKind, string> = {
@@ -72,6 +81,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const [project, setProject] = useState("");
   const [start, setStart] = useState("");
   const [dur, setDur] = useState("");
+  const [addFiles, setAddFiles] = useState<Array<{ file: File | null; comment: string }>>([]);
+  const [addUrls, setAddUrls] = useState<Array<{ url: string; comment: string }>>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [nightBranch, setNightBranch] = useState<"yes" | "no" | null>(view.nightHas ? "yes" : null);
   const [nightReason, setNightReason] = useState(view.nightReason ?? "");
   const [dailyComment, setDailyComment] = useState(view.dailyComment ?? "");
@@ -92,6 +104,13 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const primaryLabel = writePrimaryLabel(mode, nightBranch);
   const readOnly = mode === "view";
   const commEditable = (mode === "afternoonClose" || mode === "nightClose") && !vacationMode;
+  const filteredRecent = view.recentTasks
+    .filter((s) => {
+      const q = project.trim();
+      if (!q) return true;
+      return (s.project ?? "").includes(q) || s.name.includes(q);
+    })
+    .slice(0, 6);
 
   async function call(url: string, body: unknown, method = "POST") {
     setBusy(true);
@@ -125,12 +144,44 @@ export default function ReportEditor({ view }: { view: ReportView }) {
       plannedStart: start || null,
       plannedDurationMin: durMin,
     });
-    if (ok) {
+    if (ok && ok.id) {
+      for (const u of addUrls) {
+        if (!u.url.trim()) continue;
+        await fetch(`/api/tasks/${ok.id}/attachments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: u.url.trim(), comment: u.comment || null }),
+        });
+      }
+      for (const f of addFiles) {
+        if (!f.file) continue;
+        const fd = new FormData();
+        fd.append("file", f.file);
+        fd.append("comment", f.comment);
+        await fetch(`/api/tasks/${ok.id}/attachments`, { method: "POST", body: fd });
+      }
       setTitle("");
       setProject("");
       setStart("");
       setDur("");
+      setAddFiles([]);
+      setAddUrls([]);
+      setSuggestOpen(false);
       setAddKind(null);
+      router.refresh();
+    }
+  }
+
+  function pickRecent(name: string, proj: string | null) {
+    setTitle(name);
+    if (proj) setProject(proj);
+    setSuggestOpen(false);
+  }
+
+  async function loadCarryover(kind: SectionKind) {
+    const ok = await call(`/api/reports/${view.reportId}/carryover`, { sectionKind: kind });
+    if (ok) {
+      if (ok.count === 0) alert("불러올 어제 미완료 업무가 없습니다.");
       router.refresh();
     }
   }
@@ -316,6 +367,13 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                             </div>
                           )}
                           {t.hold_reason && <div style={{ fontSize: 12, color: "#B45309", marginTop: 6 }}>지연 사유 · {t.hold_reason}</div>}
+                          {t.attachments.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                              {t.attachments.map((a) => (
+                                <AttachmentChip key={a.id} a={a} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                         {isEditable && !done && (
                           <button onClick={() => closeTask(t.id)} disabled={busy} data-testid={`close-task-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #BBE5C8", color: "#1F9254", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px" }}>마감</button>
@@ -324,11 +382,24 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                     );
                   })}
 
-                  {isEditable && (
-                    addKind === sec.kind ? (
+                  {isEditable &&
+                    (addKind === sec.kind ? (
                       <div style={{ border: "1px solid #CBD0D9", borderRadius: 10, background: "#FBFCFD", padding: 14, marginTop: 10 }}>
-                        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="업무명을 입력해 주세요" data-testid="add-title" style={inp} />
-                        <input value={project} onChange={(e) => setProject(e.target.value)} placeholder="프로젝트명 (선택)" style={{ ...inp, marginTop: 8 }} />
+                        <input value={project} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} onFocus={() => setSuggestOpen(true)} placeholder="프로젝트명 (선택) — 입력하면 최근 업무 추천" data-testid="add-project" style={inp} />
+                        {suggestOpen && filteredRecent.length > 0 && (
+                          <div style={{ border: "1px solid #E2E5EB", borderRadius: 8, background: "#fff", marginTop: 6, overflow: "hidden" }} data-testid="recent-suggest">
+                            <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", padding: "7px 10px", background: "#F7F8FA" }}>최근 진행한 업무</div>
+                            {filteredRecent.map((s, i) => (
+                              <button key={i} onClick={() => pickRecent(s.name, s.project)} data-testid="recent-item" style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none", border: "none", borderBottom: "1px solid #F2F3F6", padding: "9px 10px", cursor: "pointer", fontFamily: "inherit" }}>
+                                <span style={{ fontSize: 13, flex: 1 }}>{s.name}</span>
+                                {s.project && <span style={{ fontSize: 11, color: "#2F49B0" }}>{s.project}</span>}
+                                {s.planned && <span style={{ fontSize: 11, color: "#9AA1AE" }} className="tnum">예정 {s.planned}분</span>}
+                                <span style={{ fontSize: 12, color: "#3B5BDB", fontWeight: 600 }}>＋</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="업무명을 입력해 주세요" data-testid="add-title" style={{ ...inp, marginTop: 8 }} />
                         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                           <select value={start} onChange={(e) => setStart(e.target.value)} style={{ ...inp, flex: 1 }}>
                             <option value="">시작 시각</option>
@@ -339,15 +410,49 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                             {DUR_OPTS.map(([l]) => <option key={l}>{l}</option>)}
                           </select>
                         </div>
-                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-                          <button onClick={() => setAddKind(null)} style={btnGhost}>취소</button>
+
+                        {/* 첨부파일 + 코멘트 */}
+                        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #EFF1F5" }}>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 8 }}>첨부파일 + 코멘트 <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(선택 · 여러 개)</span></label>
+                          {addFiles.map((f, i) => (
+                            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                              <input type="file" data-testid={`file-input-${i}`} onChange={(e) => setAddFiles((p) => p.map((x, k) => (k === i ? { ...x, file: e.target.files?.[0] ?? null } : x)))} style={{ fontSize: 12, flex: "none", maxWidth: 180 }} />
+                              <input value={f.comment} onChange={(e) => setAddFiles((p) => p.map((x, k) => (k === i ? { ...x, comment: e.target.value } : x)))} placeholder="코멘트 (선택)" style={{ ...inp, flex: 1, height: 36 }} />
+                              <button onClick={() => setAddFiles((p) => p.filter((_, k) => k !== i))} style={{ flex: "none", width: 32, height: 32, border: "1px solid #E2E5EB", borderRadius: 8, background: "#fff", color: "#9AA1AE", cursor: "pointer" }}>✕</button>
+                            </div>
+                          ))}
+                          <button onClick={() => setAddFiles((p) => [...p, { file: null, comment: "" }])} data-testid="add-file-row" style={{ background: "#F7F8FA", border: "1px dashed #CBD0D9", borderRadius: 8, padding: "6px 11px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#3B5BDB" }}>＋ 첨부파일 추가</button>
+                        </div>
+
+                        {/* URL + 코멘트 */}
+                        <div style={{ marginTop: 12 }}>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 8 }}>URL + 코멘트 <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(선택 · 여러 개)</span></label>
+                          {addUrls.map((u, i) => (
+                            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                              <input value={u.url} onChange={(e) => setAddUrls((p) => p.map((x, k) => (k === i ? { ...x, url: e.target.value } : x)))} placeholder="https://" data-testid={`url-input-${i}`} style={{ ...inp, flex: 1.3, height: 36 }} />
+                              <input value={u.comment} onChange={(e) => setAddUrls((p) => p.map((x, k) => (k === i ? { ...x, comment: e.target.value } : x)))} placeholder="코멘트 (선택)" style={{ ...inp, flex: 1, height: 36 }} />
+                              <button onClick={() => setAddUrls((p) => p.filter((_, k) => k !== i))} style={{ flex: "none", width: 32, height: 32, border: "1px solid #E2E5EB", borderRadius: 8, background: "#fff", color: "#9AA1AE", cursor: "pointer" }}>✕</button>
+                            </div>
+                          ))}
+                          <button onClick={() => setAddUrls((p) => [...p, { url: "", comment: "" }])} data-testid="add-url-row" style={{ background: "#F7F8FA", border: "1px dashed #CBD0D9", borderRadius: 8, padding: "6px 11px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#3B5BDB" }}>＋ URL 추가</button>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+                          <button onClick={() => { setAddKind(null); setSuggestOpen(false); }} style={btnGhost}>취소</button>
                           <button onClick={() => submitAdd(sec.kind)} disabled={busy} data-testid="add-submit" style={btnPrimary}>추가</button>
                         </div>
                       </div>
                     ) : (
-                      <button onClick={() => setAddKind(sec.kind)} data-testid={`add-task-${sec.kind}`} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px dashed #CBD0D9", borderRadius: 8, padding: "9px 12px", width: "100%", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: "#3B5BDB", marginTop: 10 }}>＋ 업무 추가</button>
-                    )
-                  )}
+                      <div style={{ marginTop: 10 }}>
+                        <button onClick={() => setAddKind(sec.kind)} data-testid={`add-task-${sec.kind}`} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px dashed #CBD0D9", borderRadius: 8, padding: "9px 12px", width: "100%", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: "#3B5BDB" }}>＋ 업무 추가</button>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                          <button onClick={() => loadCarryover(sec.kind)} disabled={busy} data-testid={`carryover-${sec.kind}`} style={chip}>↻ 어제 미완료 불러오기</button>
+                          {view.recentTasks.length > 0 && (
+                            <button onClick={() => { setAddKind(sec.kind); setSuggestOpen(true); }} data-testid={`repeat-${sec.kind}`} style={chip}>반복 업무</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                 </div>
               </div>
             );
@@ -420,6 +525,25 @@ export default function ReportEditor({ view }: { view: ReportView }) {
 const inp: React.CSSProperties = { width: "100%", height: 40, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 12px", fontFamily: "inherit", fontSize: 14, outline: "none", background: "#fff" };
 const btnGhost: React.CSSProperties = { border: "1px solid #CBD0D9", background: "#fff", color: "#3A4150", borderRadius: 8, fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: "7px 14px", cursor: "pointer" };
 const btnPrimary: React.CSSProperties = { border: "none", background: "#3B5BDB", color: "#fff", borderRadius: 8, fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: "8px 18px", cursor: "pointer" };
+const chip: React.CSSProperties = { background: "#F7F8FA", border: "1px solid #E2E5EB", borderRadius: 9999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#3A4150" };
+const chipLink: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, background: "#F7F8FA", border: "1px solid #E2E5EB", borderRadius: 7, padding: "4px 9px", fontSize: 12, color: "#3A4150", textDecoration: "none", fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+function AttachmentChip({ a }: { a: TaskAttachment }) {
+  if (a.kind === "file") {
+    return (
+      <a href={`/api/attachments/${a.id}`} style={chipLink} title={a.comment ?? undefined}>
+        📎 {a.fileName}
+        {a.comment ? <span style={{ color: "#9AA1AE", fontWeight: 400 }}> · {a.comment}</span> : null}
+      </a>
+    );
+  }
+  return (
+    <a href={a.url ?? "#"} target="_blank" rel="noreferrer" style={chipLink} title={a.comment ?? a.url ?? undefined}>
+      🔗 {a.comment || a.url}
+    </a>
+  );
+}
+
 function pill(active: boolean): React.CSSProperties {
   return { border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: "6px 16px", borderRadius: 9999, background: active ? "#3B5BDB" : "transparent", color: active ? "#fff" : "#3A4150" };
 }

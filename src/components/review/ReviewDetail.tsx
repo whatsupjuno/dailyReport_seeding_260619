@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { statusMeta } from "@/lib/domain/status";
 
+export interface ReviewAttachment {
+  id: number;
+  kind: "file" | "url";
+  fileName: string | null;
+  url: string | null;
+  comment: string | null;
+}
 export interface ReviewView {
   reportId: number;
   reviewerName: string;
@@ -16,11 +23,12 @@ export interface ReviewView {
   nightReason: string | null;
   dailyComment: string | null;
   pending: boolean;
+  queueNav: { position: string | null; prevId: number | null; nextId: number | null };
   sections: Array<{
     kind: string;
     name: string;
     status: string;
-    tasks: Array<{ title: string; project: string | null; status: string; plannedMin: number | null; actualMin: number | null; hold: string | null }>;
+    tasks: Array<{ title: string; project: string | null; status: string; plannedMin: number | null; actualMin: number | null; hold: string | null; attachments: ReviewAttachment[] }>;
   }>;
   comms: Array<{ type: string; counterpart: string; time: string | null; summary: string }>;
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
@@ -32,6 +40,9 @@ const REJECT_TEMPLATES = ["일정 누락", "근거 불충분", "완결 처리 �
 function timeOf(ts: string): string {
   return new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ts));
 }
+
+const navBtn: React.CSSProperties = { width: 28, height: 28, border: "1px solid #E2E5EB", background: "#fff", borderRadius: 7, display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", fontSize: 12 };
+const reviewChipLink: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, background: "#F7F8FA", border: "1px solid #E2E5EB", borderRadius: 7, padding: "4px 9px", fontSize: 12, color: "#3A4150", textDecoration: "none", fontWeight: 600, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
 export default function ReviewDetail({ view }: { view: ReviewView }) {
   const router = useRouter();
@@ -76,6 +87,21 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
     <div>
       <div style={{ background: "#fff", borderBottom: "1px solid #E2E5EB", height: 56, display: "flex", alignItems: "center", padding: "0 24px", gap: 14 }}>
         <a href="/review" style={{ fontSize: 13, fontWeight: 600, color: "#3B5BDB", textDecoration: "none" }}>← 목록으로</a>
+        {view.queueNav.position && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 14, borderLeft: "1px solid #E2E5EB" }} data-testid="queue-nav">
+            <span style={{ fontSize: 13, color: "#6B7280" }} className="tnum">{view.queueNav.position}</span>
+            {view.queueNav.prevId ? (
+              <a href={`/review/${view.queueNav.prevId}`} data-testid="queue-prev" style={{ ...navBtn, color: "#3A4150" }}>◀</a>
+            ) : (
+              <span style={{ ...navBtn, color: "#CBD0D9" }}>◀</span>
+            )}
+            {view.queueNav.nextId ? (
+              <a href={`/review/${view.queueNav.nextId}`} data-testid="queue-next" style={{ ...navBtn, color: "#3A4150" }}>▶</a>
+            ) : (
+              <span style={{ ...navBtn, color: "#CBD0D9" }}>▶</span>
+            )}
+          </div>
+        )}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: "#6B7280" }}>검수자 <strong style={{ color: "#3A4150" }}>{view.reviewerName}</strong></span>
       </div>
@@ -127,6 +153,17 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
                             </div>
                             {(t.plannedMin || t.actualMin) && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 3 }} className="tnum">{t.plannedMin ? `계획 ${t.plannedMin}분` : ""}{t.actualMin ? ` / 실제 ${t.actualMin}분` : ""}</div>}
                             {t.hold && <div style={{ fontSize: 12, color: "#B45309", marginTop: 5 }}>지연 사유 · {t.hold}</div>}
+                            {t.attachments.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                {t.attachments.map((a) =>
+                                  a.kind === "file" ? (
+                                    <a key={a.id} href={`/api/attachments/${a.id}`} style={reviewChipLink} title={a.comment ?? undefined}>📎 {a.fileName}{a.comment ? ` · ${a.comment}` : ""}</a>
+                                  ) : (
+                                    <a key={a.id} href={a.url ?? "#"} target="_blank" rel="noreferrer" style={reviewChipLink} title={a.comment ?? a.url ?? undefined}>🔗 {a.comment || a.url}</a>
+                                  ),
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );

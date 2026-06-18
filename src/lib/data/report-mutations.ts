@@ -248,6 +248,64 @@ export async function advanceReport(
 
 const SUBMITTED = ["검수대기", "승인", "제출완료", "재제출"];
 
+/** 직전 보고서의 미완료(완결 아님) 업무를 지정 시간대로 이월 */
+export async function carryoverIncomplete(
+  reportId: number,
+  sectionKind: SectionKind,
+): Promise<{ count: number }> {
+  return tx(async (c) => {
+    const rep = await c.query<{ user_id: number; report_date: string; status: string }>(
+      `SELECT user_id, to_char(report_date,'YYYY-MM-DD') AS report_date, status
+         FROM daily_reports WHERE id=$1 FOR UPDATE`,
+      [reportId],
+    );
+    const r = rep.rows[0];
+    if (!r) throw new Error("NOT_FOUND");
+    if (SUBMITTED.includes(r.status)) throw new Error("LOCKED");
+
+    const sec = await c.query<{ id: number; locked: boolean }>(
+      `SELECT id, locked FROM report_sections WHERE report_id=$1 AND kind=$2`,
+      [reportId, sectionKind],
+    );
+    let sectionId = sec.rows[0]?.id;
+    if (!sectionId) sectionId = await ensureSection(c, reportId, sectionKind);
+    else if (sec.rows[0].locked) throw new Error("LOCKED");
+
+    // 직전 보고서 (가장 최근 과거)
+    const prior = await c.query<{ id: number }>(
+      `SELECT id FROM daily_reports WHERE user_id=$1 AND report_date < $2
+        ORDER BY report_date DESC LIMIT 1`,
+      [r.user_id, r.report_date],
+    );
+    if (!prior.rows[0]) return { count: 0 };
+
+    const tasks = await c.query<{ id: number; project: string | null; title: string }>(
+      `SELECT id, project, title FROM tasks WHERE report_id=$1 AND status <> '완결' ORDER BY sort_order, id`,
+      [prior.rows[0].id],
+    );
+    let base = (
+      await c.query<{ n: number }>(`SELECT COALESCE(MAX(sort_order)+1,0) AS n FROM tasks WHERE section_id=$1`, [
+        sectionId,
+      ])
+    ).rows[0].n;
+
+    let count = 0;
+    for (const t of tasks.rows) {
+      // 같은 제목이 이미 이 시간대에 있으면 스킵(중복 방지)
+      const dup = await c.query(`SELECT 1 FROM tasks WHERE section_id=$1 AND title=$2`, [sectionId, t.title]);
+      if (dup.rows[0]) continue;
+      await c.query(
+        `INSERT INTO tasks(report_id, section_id, project, title, status, sort_order, carried_from_task_id)
+         VALUES ($1,$2,$3,$4,'계획',$5,$6)`,
+        [reportId, sectionId, t.project, t.title, base++, t.id],
+      );
+      count++;
+    }
+    await touch(c, reportId);
+    return { count };
+  });
+}
+
 /** 커뮤니케이션 기록 추가 (제출 전 보고서에만) */
 export async function addCommunication(
   reportId: number,

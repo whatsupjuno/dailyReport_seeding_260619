@@ -36,3 +36,6 @@ _design_decoded.html
 # ts build info
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# uploaded attachments
+uploads/

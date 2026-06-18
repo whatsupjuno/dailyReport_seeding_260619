@@ -75,6 +75,7 @@ async function main() {
     async function makeReport(opts: {
       login: string;
       status: string;
+      date?: string;
       submitted?: boolean;
       sections: Array<{
         kind: "plan" | "morning" | "afternoon" | "night";
@@ -99,7 +100,7 @@ async function main() {
          VALUES ($1,$2,$3,$4,$5) RETURNING id`,
         [
           uid[opts.login],
-          today,
+          opts.date ?? today,
           opts.status,
           opts.submitted ? new Date() : null,
           opts.dailyComment ?? null,
@@ -210,6 +211,29 @@ async function main() {
         },
       ],
       events: [{ kind: "submitted", actor: "park.seojun" }],
+    });
+
+    // 김서연: 전일 보고서(미완 업무 보유) — carryover(어제 미완료 불러오기) e2e용
+    const yd = new Date(today + "T00:00:00Z");
+    yd.setUTCDate(yd.getUTCDate() - 1);
+    const yesterday = yd.toISOString().slice(0, 10);
+    await makeReport({
+      login: "kim.seoyeon",
+      status: "승인",
+      date: yesterday,
+      submitted: true,
+      sections: [
+        {
+          kind: "afternoon",
+          status: "마감완료",
+          locked: true,
+          tasks: [
+            { project: "런칭", title: "런칭 보도자료 검토", status: "완결", plannedMin: 60, actualMin: 70 },
+            { project: "런칭", title: "퍼포먼스 광고 예산 리포트", status: "지연", hold: "데이터팀 수치 확정 대기" },
+          ],
+        },
+      ],
+      events: [{ kind: "submitted", actor: "kim.seoyeon" }, { kind: "approved", actor: "kim.jiwon" }],
     });
 
     await c.query("COMMIT");

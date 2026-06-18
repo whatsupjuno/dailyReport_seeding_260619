@@ -121,6 +121,25 @@ export async function loadFullReport(reportId: number): Promise<FullReport | nul
   return { report, sections, tasks, comms, events };
 }
 
+export interface RecentTask {
+  name: string;
+  project: string | null;
+  planned: number | null;
+}
+
+/** 사용자의 최근 업무(제목별 최신 1건) — 자동완성/반복 업무용 */
+export async function recentTaskSuggestions(userId: number, limit = 8): Promise<RecentTask[]> {
+  return query<RecentTask>(
+    `SELECT s.name, s.project, s.planned FROM (
+       SELECT DISTINCT ON (lower(title)) title AS name, project, planned_duration_min AS planned, t.id AS tid
+         FROM tasks t JOIN daily_reports r ON r.id=t.report_id
+        WHERE r.user_id=$1 AND length(trim(title)) > 0
+        ORDER BY lower(title), t.id DESC
+     ) s ORDER BY s.tid DESC LIMIT $2`,
+    [userId, limit],
+  );
+}
+
 export async function getReportOwnerId(reportId: number): Promise<number | null> {
   const r = await queryOne<{ user_id: number }>(`SELECT user_id FROM daily_reports WHERE id=$1`, [
     reportId,

@@ -4,12 +4,14 @@ import {
   getOrCreateReport,
   getReportByUserDate,
   loadFullReport,
+  recentTaskSuggestions,
   sectionStatusMap,
   type TaskRow,
 } from "@/lib/data/reports";
+import { attachmentsByReport } from "@/lib/data/attachments";
 import { computeWriteMode } from "@/lib/domain/mode";
 import { formatKoreanDate, todayKstISO } from "@/lib/date";
-import ReportEditor, { type ReportView } from "@/components/report/ReportEditor";
+import ReportEditor, { type ReportView, type TaskAttachment } from "@/components/report/ReportEditor";
 
 function isValidIsoDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -37,12 +39,35 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
   const secMap = sectionStatusMap(full.sections);
   const mode = computeWriteMode(full.report.status, full.report.is_vacation, secMap);
 
+  const [attachments, recentTasks] = await Promise.all([
+    attachmentsByReport(reportId),
+    recentTaskSuggestions(user.id),
+  ]);
+  const attMap = new Map<number, TaskAttachment[]>();
+  for (const a of attachments) {
+    const arr = attMap.get(a.task_id) ?? [];
+    arr.push({ id: a.id, kind: a.kind, fileName: a.file_name, url: a.url, comment: a.comment });
+    attMap.set(a.task_id, arr);
+  }
+
   const sections = full.sections.map((s) => ({
     id: s.id,
     kind: s.kind,
     status: s.status,
     locked: s.locked,
-    tasks: full.tasks.filter((t: TaskRow) => t.section_id === s.id),
+    tasks: full.tasks
+      .filter((t: TaskRow) => t.section_id === s.id)
+      .map((t) => ({
+        id: t.id,
+        project: t.project,
+        title: t.title,
+        status: t.status,
+        planned_start: t.planned_start,
+        planned_duration_min: t.planned_duration_min,
+        actual_duration_min: t.actual_duration_min,
+        hold_reason: t.hold_reason,
+        attachments: attMap.get(t.id) ?? [],
+      })),
   }));
 
   const view: ReportView = {
@@ -73,6 +98,7 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
       rejectTarget: e.reject_target,
       at: e.created_at,
     })),
+    recentTasks,
   };
 
   return <ReportEditor view={view} />;

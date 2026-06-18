@@ -11,6 +11,8 @@ export const env = {
   tz: process.env.TZ ?? "Asia/Seoul",
   sessionSecret: process.env.SESSION_SECRET ?? "dev-change-me-please",
   databaseUrl: req("DATABASE_URL", "postgresql://seeding:seeding@localhost:5432/seeding"),
+  uploadDir: process.env.UPLOAD_DIR ?? `${process.cwd()}/uploads`,
+  maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? 10 * 1024 * 1024), // 10MB
 
   mail: {
     transport: (process.env.MAIL_TRANSPORT ?? "log") as "log" | "ncp",
