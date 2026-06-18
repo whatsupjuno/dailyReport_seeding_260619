@@ -1,0 +1,16 @@
+[Unit]
+Description=Seeding daily report app
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/apps/seeding
+Environment=NODE_ENV=production
+Environment=PORT=80
+ExecStart=/usr/bin/node /opt/apps/seeding/node_modules/next/dist/bin/next start -p 80
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

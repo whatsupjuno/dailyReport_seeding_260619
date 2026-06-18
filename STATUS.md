@@ -35,3 +35,9 @@
 - 의존성: `pnpm install`  · DB: `pnpm db:reset && pnpm db:seed`  · 개발: `pnpm dev`(3000)
 - 단위: `pnpm test`  · e2e: `pnpm test:e2e`  (둘 다 로컬 PostgreSQL 필요)
 - 로그인: 시드 사용자(kim.doyun/그룹장, park.sora/관리자, oh.serim/직원 등) + 고정코드 **1234**
+
+## 🚀 배포 (라이브)
+- **http://58.229.163.104** — systemd `seeding.service`(포트 80), 같은 서버 기존 앱 agentnews와 격리 공존
+- DB: agentnews-postgres 컨테이너 내 별도 `seeding` DB / 메일: NCP 실발송(no-reply@wavle.io) 검증
+- 자동 발송 cron(평일 KST 08:30/11:50/17:50) — 08:30에 Sales 팀 전원 발송. 상세 `deploy/DEPLOY.md`
+- 운영 사용자: 방준호(juno@wavle.io/5660·그룹장)·박정빈(jb@wavle.io/7815)·강진현(jhkang@wavle.io/4942)
