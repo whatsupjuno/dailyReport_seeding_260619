@@ -14,8 +14,9 @@ async function main() {
     const gid = (await c.query<{ id: number }>(`SELECT id FROM groups WHERE name='Sales'`)).rows[0].id;
 
     // [login_id(=email), name, code, role]
-    const users: Array<[string, string, string, "employee" | "group_leader"]> = [
-      ["juno@wavle.io", "방준호", "5660", "group_leader"],
+    // 방준호: Sales 리더이자 운영 관리자 → role=admin (관리 메뉴 + 전체 검수). Sales group leader로도 유지.
+    const users: Array<[string, string, string, "employee" | "group_leader" | "admin"]> = [
+      ["juno@wavle.io", "방준호", "5660", "admin"],
       ["jb@wavle.io", "박정빈", "7815", "employee"],
       ["jhkang@wavle.io", "강진현", "4942", "employee"],
     ];
