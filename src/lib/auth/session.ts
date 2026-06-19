@@ -38,7 +38,13 @@ export async function getSessionUser(): Promise<UserRow | null> {
     [token],
   );
   if (!row) return null;
-  return getUserById(row.user_id);
+  const user = await getUserById(row.user_id);
+  // 비활성(퇴사/휴직) 사용자는 잔존 세션이어도 차단 + 세션 즉시 폐기(권한 누수 방지)
+  if (!user || !user.active) {
+    if (user && !user.active) await query(`DELETE FROM sessions WHERE token = $1`, [token]);
+    return null;
+  }
+  return user;
 }
 
 export async function destroySession(): Promise<void> {

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Seeding v2 — 예외사항 감사 리포트</title>
+<style>
+  :root{
+    --brand:#3B5BDB; --ink:#1A1F2B; --muted:#6B7280; --faint:#9AA1AE; --line:#E2E5EB; --bg:#F7F8FA;
+    --p0:#DC2626; --p0bg:#FCEBEB; --p0ln:#F5C2C2;
+    --p1:#B7860B; --p1bg:#FBF4DA; --p1ln:#EFE0A6;
+    --p2:#2563EB; --p2bg:#E6EEFD; --p2ln:#BBD0F7;
+    --ok:#1F9254; --okbg:#E7F6EC; --okln:#BBE5C8;
+    --gray:#6B7280; --graybg:#F1F2F4; --grayln:#D9DCE2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;line-height:1.55;word-break:keep-all;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+  .tnum{font-variant-numeric:tabular-nums}
+  /* header */
+  header.hero{background:linear-gradient(135deg,#3B5BDB,#2F49B0);color:#fff;border-radius:18px;padding:30px 32px;box-shadow:0 8px 24px rgba(47,73,176,.22)}
+  header.hero .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;background:rgba(255,255,255,.18);padding:4px 11px;border-radius:9999px}
+  header.hero h1{font-size:27px;margin:14px 0 6px;font-weight:800}
+  header.hero p{margin:0;font-size:14px;opacity:.92}
+  header.hero .meta{display:flex;flex-wrap:wrap;gap:18px;margin-top:18px;font-size:13px;opacity:.95}
+  header.hero .meta b{font-weight:700}
+  /* summary cards */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:0 1px 3px rgba(16,24,40,.06)}
+  .card .n{font-size:30px;font-weight:800;line-height:1}
+  .card .l{font-size:12px;color:var(--muted);margin-top:6px;font-weight:600}
+  .card.ok .n{color:var(--ok)} .card.p0 .n{color:var(--p0)} .card.p1 .n{color:var(--p1)} .card.brand .n{color:var(--brand)}
+  /* section */
+  section{margin:30px 0}
+  h2{font-size:18px;font-weight:800;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  h2 .dot{width:9px;height:18px;border-radius:3px;background:var(--brand)}
+  .sub{font-size:13px;color:var(--muted);margin:0 0 14px}
+  /* badges */
+  .b{display:inline-flex;align-items:center;gap:4px;height:21px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;line-height:1}
+  .b.p0{color:var(--p0);background:var(--p0bg);border:1px solid var(--p0ln)}
+  .b.p1{color:var(--p1);background:var(--p1bg);border:1px solid var(--p1ln)}
+  .b.p2{color:var(--p2);background:var(--p2bg);border:1px solid var(--p2ln)}
+  .b.ok{color:var(--ok);background:var(--okbg);border:1px solid var(--okln)}
+  .b.par{color:#8A6508;background:var(--p1bg);border:1px solid var(--p1ln)}
+  .b.def{color:var(--gray);background:var(--graybg);border:1px solid var(--grayln)}
+  /* table */
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
+  thead th{background:#FAFBFC;text-align:left;padding:11px 14px;font-size:11px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.03em}
+  tbody td{padding:12px 14px;border-bottom:1px solid #F2F3F6;vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  td.sev{white-space:nowrap;width:54px}
+  td.st{white-space:nowrap;width:78px}
+  td.area{white-space:nowrap;color:var(--brand);font-weight:600;font-size:12px;width:120px}
+  .find{font-weight:600}
+  .fix{color:#3A4150;margin-top:3px}
+  .ev{color:var(--faint);font-size:11.5px;margin-top:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .risk{color:#8A6508;font-size:11.5px;margin-top:4px}
+  /* callout */
+  .callout{display:flex;gap:11px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:11px;padding:14px 16px;margin:14px 0;font-size:13.5px}
+  .callout.warn{border-left-color:var(--p1);background:var(--p1bg);color:#6B5316}
+  .callout.ok{border-left-color:var(--ok);background:var(--okbg);color:#1c5c39}
+  .callout b{font-weight:700}
+  ul.tight{margin:8px 0 0;padding-left:20px;font-size:13px}
+  ul.tight li{margin:5px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
+  .panel h3{font-size:14px;font-weight:700;margin:0 0 10px}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:5px 0;border-bottom:1px dashed #EFF1F5}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--muted)} .kv .v{font-weight:600;text-align:right}
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--faint);text-align:center}
+  @media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}td.area{width:auto}}
+  @media print{body{background:#fff}.wrap{max-width:none}header.hero{box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="tag">EXCEPTION AUDIT · 적대적 리뷰 + 코드 독립검증</span>
+    <h1>Seeding v2 — 예외사항 감사 리포트</h1>
+    <p>일일 업무 보고 시스템 v2(단일목록·업무별 댓글·업무별 반려·휴직) 출시 전 전수 예외 점검 및 수정 검증.</p>
+    <div class="meta">
+      <span>📅 <b>2026-06-20</b></span>
+      <span>🌿 <b>feature/v2-p0p1</b> @ <span class="tnum">b0f8d8c</span></span>
+      <span>🚀 <b>라이브</b> http://58.229.163.104</span>
+      <span>✅ unit 65 · e2e 24 · build OK</span>
+    </div>
+  </header>
+
+  <div class="cards">
+    <div class="card brand"><div class="n tnum">46</div><div class="l">총 발견 (검증된 수정)</div></div>
+    <div class="card ok"><div class="n tnum">44</div><div class="l">수정 완료 · 코드 검증</div></div>
+    <div class="card p0"><div class="n tnum">8</div><div class="l">P0 (크래시/유실/보안)</div></div>
+    <div class="card p1"><div class="n tnum">2</div><div class="l">부분/잠재 (문서화)</div></div>
+  </div>
+
+  <div class="callout ok">
+    <div>✅</div>
+    <div><b>결론:</b> 6개 적대적 리뷰어가 찾은 모든 발견사항을 수정했고, 7개 검증 에이전트가 코드에서 독립 확인한 결과 <b>44건 수정 확인 · 0건 미수정</b>. 잔여 2건은 의도적 정책(반려 시 사유 보완 허용)과 운영 미발현 잠재(타임존)로 문서화. 기능과 무관한 디자인 chrome 8건은 보류(아래 명시). 유닛 65 + e2e 24 통과, 운영 배포·백필 무결성 검증 완료.</div>
+  </div>
+
+  <section>
+    <h2><span class="dot"></span>점검 방법론</h2>
+    <p class="sub">자기보고가 아닌 독립 검증 기반 감사. 두 단계(발견 → 검증)로 구성.</p>
+    <div class="grid2">
+      <div class="panel">
+        <h3>1단계 · 6-차원 적대적 리뷰</h3>
+        <ul class="tight">
+          <li><b>DB/동시성</b> — 제약 위반·경쟁상태·트랜잭션·타임존</li>
+          <li><b>권한/입력검증</b> — IDOR·셀프검수·미매핑 500</li>
+          <li><b>도메인/타임존/컷오버</b> — 분류·라벨·v1/v2 경계</li>
+          <li><b>클라이언트 상태</b> — stale·재진입·드로어 경쟁</li>
+          <li><b>라이프사이클 정합성</b> — 계층 간 상태 불일치</li>
+          <li><b>스타일 충실도</b> — 디자인 SoT 대비 + 접근성</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>2단계 · 7-차원 독립 수정 검증</h3>
+        <ul class="tight">
+          <li>각 발견사항의 <b>수정 코드를 직접 읽어</b> 존재·정확성 확인(file:line 근거)</li>
+          <li>결과: <b>44 fixed · 2 partial · 0 not-fixed</b></li>
+          <li>회귀 검증: <b>유닛 65 · e2e 24</b> 통과 + 프로덕션 빌드</li>
+          <li>운영 검증: 마이그레이션 백필 무결성(<span class="tnum">chk_ok=t</span>), agentnews 무손상</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--p0)"></span>P0 — 크래시 · 데이터 유실 · 보안 (8건, 전부 수정)</h2>
+    <p class="sub">방치 시 500/데이터 유실/권한 우회로 이어지는 치명 항목. e2e가 추가로 3건(closeTask·메신저·야간소실)을 실측으로 잡음.</p>
+    <table>
+      <thead><tr><th class="sev">등급</th><th class="area">영역</th><th>발견 → 수정</th><th class="st">상태</th></tr></thead>
+      <tbody>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">권한/입력</td>
+          <td><div class="find">parseId가 <code>1e22·0x10·5.0·" 5"</code> 등 비정규/거대 ID 허용 → DB 범위초과 <b>unmapped 500 (전 [id] 라우트)</b></div><div class="fix">→ 정규 10진수 정규식 + <code>Number.isSafeInteger</code>로 차단</div><div class="ev">src/lib/auth/api.ts:27-31</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">DB/뮤테이션</td>
+          <td><div class="find">closeTask의 <code>CASE … '완결' END</code>이 <b>text→task_status 캐스트 실패 500</b> <span class="b p1" style="height:18px">e2e 실측</span></div><div class="fix">→ <code>(CASE…)::task_status</code> 명시 캐스트</div><div class="ev">src/lib/data/report-mutations.ts:110</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">DB/분류</td>
+          <td><div class="find">20시 이후 마감 시 <code>is_night=true</code>가 무조건 설정 → 야간 토글 off면 분류에서 <b>업무가 화면에서 소실</b> <span class="b p1" style="height:18px">e2e 실측</span></div><div class="fix">→ <code>is_night = (night_has AND KST시≥20)</code> 게이팅</div><div class="ev">src/lib/data/report-mutations.ts:114</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">권한/입력</td>
+          <td><div class="find">tasks/[id] PATCH가 임의 <code>status='완결'</code> 허용 → <b>tasks_completed_at_chk 위반 500</b></div><div class="fix">→ updateTask가 계획/진행중만 허용(BAD_STATUS), 완결/지연은 마감/마감취소 전용</div><div class="ev">report-mutations.ts:150 · tasks/[id]/route.ts:31</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">권한/입력</td>
+          <td><div class="find">communications 라우트 유형 화이트리스트에 <b>'메신저' 누락 → 정상 입력 400</b> <span class="b p1" style="height:18px">e2e 실측</span></div><div class="fix">→ TYPES에 '메신저' 추가(H4 enum 정합)</div><div class="ev">communications/route.ts:6</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">라이프사이클</td>
+          <td><div class="find">작성자 화면이 <b>행 반려 밴드를 전혀 렌더 안 함</b> + 반려 모드에서 미완료 행 미표시 → 반려 수정 동선 단절(#3 기능 무력화)</div><div class="fix">→ page가 taskRejectionMap 전달, ReportEditor가 반려 밴드 + 비-work 미완료 카드 렌더, 반려 행만 편집</div><div class="ev">ReportEditor.tsx(RejectBand) · report/[date]/page.tsx</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">스타일</td>
+          <td><div class="find">댓글 드로어 <b>슬라이드 인 애니메이션 + ESC 닫기 부재</b>(브리프 §5/§9)</div><div class="fix">→ globals.css <code>@keyframes cmtDrawerIn/cmtFadeIn</code> + 모바일 바텀시트 + ESC 핸들러</div><div class="ev">globals.css · CommentDrawer.tsx</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+        <tr><td class="sev"><span class="b p0">P0</span></td><td class="area">마이그레이션</td>
+          <td><div class="find"><code>ALTER TYPE ADD VALUE</code>가 PG&lt;12 트랜잭션 블록에서 실패 가능</div><div class="fix">→ migrate.ts가 <code>server_version_num&lt;120000</code>이면 fail-fast (운영 PG16 확인)</div><div class="ev">scripts/migrate.ts:18-25</div></td>
+          <td class="st"><span class="b ok">✓ 검증</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--p1)"></span>P1 — 잘못된 동작 · 정합성 (수정 완료)</h2>
+    <p class="sub">크래시는 아니나 동작이 어긋나거나 데이터가 어긋날 수 있는 항목. 백엔드·라이프사이클·클라이언트·스타일 전반.</p>
+    <table>
+      <thead><tr><th class="area">영역</th><th>발견 → 수정</th><th class="st">상태</th></tr></thead>
+      <tbody>
+        <tr><td class="area">권한/입력</td><td><div class="find">reject 라우트: 전역 코멘트 길이 무제한 + dailyComment/nightReason 무제한(DoS)</div><div class="fix">→ 10,000자 pre-check (reject·advance·saveDraft)</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">권한/입력</td><td><div class="find">carryover 라우트 NOT_FOUND 미매핑 → TOCTOU 500</div><div class="fix">→ NOT_FOUND→400 매핑</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">동시성</td><td><div class="find">advanceReport 더블클릭이 <b>작성중→계획제출→검수대기 2단계를 한 번에 건너뜀</b></div><div class="fix">→ expectedStatus 낙관적 동시성(STALE_STATE 409) + 클라 busyRef 재진입 가드</div><div class="ev">report-mutations.ts:202 · ReportEditor.tsx:132</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">라이프사이클</td><td><div class="find">빈 계획(업무 0건) 제출 가능 → 검수 큐 노이즈</div><div class="fix">→ 계획제출 전이 시 업무 ≥1 검사(EMPTY_PLAN)</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">DB/뮤테이션</td><td><div class="find">휴가 재제출 시 저장된 빈 사유로 DB CHECK 위반 500</div><div class="fix">→ 입력+기존값 COALESCE한 유효값 기준 필수사유 검증</div><div class="ev">report-mutations.ts:250-257</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">DB/뮤테이션</td><td><div class="find">carryoverToNext가 <b>타인/제출된 미래 보고서에 task 주입</b> + title 기준 dedup 유실</div><div class="fix">→ 목적지 WORK_STATUS 게이트 + FOR UPDATE 잠금 + carried_from 기준 dedup</div><div class="ev">report-mutations.ts:313-328</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">클라이언트</td><td><div class="find">반려 모드 결과 버킷의 '마감 취소'가 비-반려 행에도 노출(서버는 LOCKED_TASK)</div><div class="fix">→ <code>canReopen = editable && (!rejectedMode || reject_state==='반려')</code></div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">라이프사이클</td><td><div class="find">승인 시 미해소 행 반려를 무경고로 해소(확인 모달 부재)</div><div class="fix">→ approve()에 openRejectCount&gt;0 확인 다이얼로그</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">권한/UX</td><td><div class="find">행 반려 '취소'가 다른 검수자의 반려에도 노출</div><div class="fix">→ <code>t.rejectedBy === reviewerName</code> 게이팅</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">클라이언트</td><td><div class="find">CommentDrawer가 task 전환 시 인스턴스 재사용 → post 후 GET 경쟁으로 <b>댓글 교차오염</b></div><div class="fix">→ 두 호출부 모두 <code>key={drawer.id}</code> 리마운트</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">클라이언트</td><td><div class="find">미읽음 핀이 드로어 열람(읽음 처리) 후에도 새로고침 전까지 잔존</div><div class="fix">→ GET 성공 시 onChanged()로 부모 즉시 갱신</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">클라이언트</td><td><div class="find">nightOn/noComm/vacationMode 로컬 state가 router.refresh 후 props와 desync(야간 task 소실 위험)</div><div class="fix">→ useEffect 재동기화 + 야간 토글 즉시 PATCH 영속</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">도메인</td><td><div class="find">classifyTask가 NaN/파싱불가 completed_at을 '오후'로 오분류</div><div class="fix">→ <code>Number.isNaN(h) → 'todo'</code></div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">DB/입력</td><td><div class="find">doneTime <code>24:00·19:99</code>가 형식만 통과 → ::time 캐스트 500</div><div class="fix">→ 시:분 범위 정규식 <code>([01]?\d|2[0-3]):[0-5]\d</code></div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">스타일</td><td><div class="find">배너가 평문 1줄(아이콘/제목/부제 없음) + 계획제출 배너 부재</div><div class="fix">→ 아이콘+제목+부제 flex 배너 + 계획제출 골드 배너</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+        <tr><td class="area">스타일</td><td><div class="find">todo 행 진행중 파란 점(#2563EB)·검수 사이드 순서(AI 상단)·sticky·360px·댓글 역할 색(그룹장 골드)·휴가 사유 빨강 * + 한도 경고</div><div class="fix">→ 디자인 SoT 대로 정렬(globals.css rv-side·CommentDrawer·ReportEditor·ReviewDetail)</div></td><td class="st"><span class="b ok">✓</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:#8A6508"></span>부분/잠재 — 문서화(의도적 또는 운영 미발현)</h2>
+    <table>
+      <thead><tr><th class="area">영역</th><th>항목 · 판단</th><th class="st">상태</th></tr></thead>
+      <tbody>
+        <tr><td class="area">정책</td><td><div class="find">addCommunication/saveDraft 블록리스트(SUBMITTED)가 '반려' status를 차단하지 않음</div><div class="fix">→ <b>의도적</b>: 반려 상태에서 사유 보완/커뮤 기록을 막지 않음. 핵심 업무 행 편집은 assertRowEditable로 별도 게이팅(반려 행만). 정책 합의 시 차단으로 전환 가능.</div><div class="ev">report-mutations.ts:8 (SUBMITTED)</div></td><td class="st"><span class="b par">◐ 정책</span></td></tr>
+        <tr><td class="area">도메인</td><td><div class="find">kstHour가 오프셋 없는 naive 시각 문자열을 서버 로컬 타임존으로 파싱(잠재 오분류)</div><div class="fix">→ <b>운영 미발현</b>: completed_at은 timestamptz(OID 1184)라 pg가 JS Date로 반환 → 절대시각으로 정확. NaN 가드는 추가됨. 향후 naive 문자열 유입 방지 위해 TaskRow 타입을 <code>Date|string</code>으로 정정 권장.</div><div class="ev">classify.ts:kstHour</div></td><td class="st"><span class="b par">◐ 잠재</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--gray)"></span>보류 — 디자인 chrome (기능 무관, 추후 작업)</h2>
+    <p class="sub">4개 핵심 기능 동작에는 영향 없는 시각 디테일. 우선순위 합의 후 진행 권장.</p>
+    <div class="panel">
+      <ul class="tight">
+        <li>LNB 아이콘 + 섹션 서브내비 + 모바일 2행 탭</li>
+        <li>작성 헤더 '마감까지 N' 카운트다운 칩 + '저장됨 · HH:MM' <code>aria-live</code> 표시</li>
+        <li>검수 이력 타임라인의 행 반려별 동적 노드 + 점선 '검수 대기 중' 종단 노드</li>
+        <li>행 반려 팝오버/반려 모달의 골드 콜아웃 + '그룹장 코멘트' 라벨 카피</li>
+        <li>검수 행 18px 원형 상태 배지 + 지연 행 빨강 좌측 밴드</li>
+        <li>검수 사이드 직원용 반려 코멘트 카드('재작성하러 가기 →')</li>
+        <li>제출/반려 모달 ESC 닫기(현재 댓글 드로어만 적용)</li>
+        <li>커뮤/검수이력 리스트의 index key → 안정 id key</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--gray)"></span>알려진 운영 정책 (수용 — OTP 전환 시 해소)</h2>
+    <div class="panel">
+      <ul class="tight">
+        <li><b>고정 4자리 로그인 코드</b> + X-Forwarded-For 스푸핑 가능 레이트리밋(20/5분) — 운영 안정화 후 자동 OTP/메일 인증 전환 권장.</li>
+        <li><b>세션 쿠키 Secure-over-HTTP</b> — HTTP(IP) 운영 특성. HMAC 서명으로 위조/고정은 차단되나 평문 캡처는 가능 → <b>TLS(역프록시) 전환 권장</b>. 전환 시 <code>secure:true</code> 자동 적용.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--ok)"></span>검증 · 배포 증적</h2>
+    <div class="grid2">
+      <div class="panel">
+        <h3>테스트</h3>
+        <div class="kv"><span class="k">유닛 (vitest)</span><span class="v tnum">65 / 65 통과</span></div>
+        <div class="kv"><span class="k">E2E (playwright)</span><span class="v tnum">24 / 24 통과</span></div>
+        <div class="kv"><span class="k">타입체크 (tsc)</span><span class="v">0 에러</span></div>
+        <div class="kv"><span class="k">프로덕션 빌드</span><span class="v">성공</span></div>
+        <div class="kv"><span class="k">신규 e2e 발견 버그</span><span class="v">3건(수정 완료)</span></div>
+      </div>
+      <div class="panel">
+        <h3>운영 배포 (2026-06-20 00:15 KST)</h3>
+        <div class="kv"><span class="k">URL</span><span class="v">http://58.229.163.104</span></div>
+        <div class="kv"><span class="k">마이그레이션</span><span class="v tnum">0001–0009 (5 신규)</span></div>
+        <div class="kv"><span class="k">DB 백업 선확보</span><span class="v">backup-pre-v2 (45K)</span></div>
+        <div class="kv"><span class="k">백필 무결성</span><span class="v">chk_ok = t</span></div>
+        <div class="kv"><span class="k">agentnews 격리</span><span class="v">무손상 (healthy)</span></div>
+      </div>
+    </div>
+    <div class="callout warn">
+      <div>⚠</div>
+      <div><b>컷오버 안내:</b> 06-19의 미제출 <code>작성중</code> v1 보고서 1건은 모델 컷오버 정책상 레거시(읽기 전용)로 동결됩니다. 기존 06-19 보고서(승인 2건)는 레거시 렌더로 정상 열람되며, 06-20부터의 신규 보고서는 전부 v2(단일목록)입니다. 해당 미제출 보고서를 마저 제출해야 하면 v2 전환 가능합니다.</div>
+    </div>
+  </section>
+
+  <footer>
+    Seeding v2 예외사항 감사 · 6-차원 적대적 리뷰 + 7-차원 코드 독립검증 · 생성 2026-06-20<br/>
+    🤖 Generated with Claude Code (Opus 4.8)
+  </footer>
+
+</div>
+</body>
+</html>

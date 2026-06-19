@@ -2,6 +2,7 @@ import "./_loadenv";
 import { Client } from "pg";
 import { mailer } from "../src/lib/mail";
 import { reportInviteEmail } from "../src/lib/mail/templates";
+import { isV2Date } from "../src/lib/domain/config";
 
 // 정해진 시점에 활성 사용자에게 보고 작성 안내 메일 발송 + 당일 보고서 보장.
 // 사용: tsx scripts/dispatch.ts <plan_invite|morning_close|afternoon_close|night_close|reminder>
@@ -50,15 +51,19 @@ async function main() {
     );
     let rid = ex.rows[0]?.id;
     if (!rid) {
+      // getOrCreateReport와 동일 규칙: v2면 model_version=2 + plan 섹션 미생성(미설정 시 v2 동결되어 작성 불가).
+      const v2 = isV2Date(today);
       rid = (
         await c.query<{ id: number }>(
-          `INSERT INTO daily_reports(user_id, report_date, status) VALUES ($1,$2,'작성중') RETURNING id`,
-          [u.id, today],
+          `INSERT INTO daily_reports(user_id, report_date, status, model_version) VALUES ($1,$2,'작성중',$3) RETURNING id`,
+          [u.id, today, v2 ? 2 : 1],
         )
       ).rows[0].id;
-      await c.query(`INSERT INTO report_sections(report_id, kind, status) VALUES ($1,'plan','작성중')`, [
-        rid,
-      ]);
+      if (!v2) {
+        await c.query(`INSERT INTO report_sections(report_id, kind, status) VALUES ($1,'plan','작성중')`, [
+          rid,
+        ]);
+      }
     }
 
     const msg = reportInviteEmail(u.email, u.name, kind, link);
