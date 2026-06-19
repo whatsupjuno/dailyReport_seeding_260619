@@ -39,3 +39,6 @@ tsconfig.tsbuildinfo
 
 # uploaded attachments
 uploads/
+
+# decoded design artifacts (reference only)
+_design_v*_decoded.html
