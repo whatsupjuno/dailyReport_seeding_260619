@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { statusMeta } from "@/lib/domain/status";
+import CommentDrawer, { CommentButton, type DrawerTask } from "@/components/report/CommentDrawer";
 
 export interface ReviewAttachment {
   id: number;
@@ -11,25 +12,48 @@ export interface ReviewAttachment {
   url: string | null;
   comment: string | null;
 }
+export interface ReviewTask {
+  id: number;
+  project: string | null;
+  title: string;
+  status: string;
+  doneTime: string | null;
+  isNight: boolean;
+  plannedMin: number | null;
+  actualMin: number | null;
+  hold: string | null;
+  attachments: ReviewAttachment[];
+  commentCount: number;
+  commentUnread: boolean;
+  rejectComment: string | null;
+  rejectedBy: string | null;
+}
+interface ReviewSection {
+  kind: string;
+  name: string;
+  status: string;
+  tasks: ReviewTask[];
+}
 export interface ReviewView {
   reportId: number;
   reviewerName: string;
+  viewerRole: string;
   ownerName: string;
   dept: string | null;
   dateLabel: string;
   status: string;
   isVacation: boolean;
   vacationType: string | null;
+  vacationComment: string | null;
   nightReason: string | null;
   dailyComment: string | null;
-  pending: boolean;
+  pending: boolean; // 검수대기(전체 승인/반려 가능)
+  reviewable: boolean; // 계획제출 ∨ 검수대기(행 반려 가능)
+  openRejectCount: number;
+  model: 1 | 2;
   queueNav: { position: string | null; prevId: number | null; nextId: number | null };
-  sections: Array<{
-    kind: string;
-    name: string;
-    status: string;
-    tasks: Array<{ title: string; project: string | null; status: string; plannedMin: number | null; actualMin: number | null; hold: string | null; attachments: ReviewAttachment[] }>;
-  }>;
+  buckets?: { todo: ReviewTask[]; am: ReviewTask[]; pm: ReviewTask[]; night: ReviewTask[] };
+  sections?: ReviewSection[];
   comms: Array<{ type: string; counterpart: string; time: string | null; summary: string }>;
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
 }
@@ -50,37 +74,151 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [comment, setComment] = useState("");
   const [target, setTarget] = useState("전체");
+  const [drawer, setDrawer] = useState<DrawerTask | null>(null);
+  const [rowRejectId, setRowRejectId] = useState<number | null>(null);
+  const [rowComment, setRowComment] = useState("");
 
-  async function approve() {
+  const openDrawer = (t: ReviewTask, zone: string) =>
+    setDrawer({ id: t.id, title: t.title, project: t.project, status: t.status, zone });
+
+  async function call(url: string, init: RequestInit): Promise<boolean> {
     setBusy(true);
     try {
-      const res = await fetch(`/api/reviews/${view.reportId}/approve`, { method: "POST" });
+      const res = await fetch(url, init);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) { alert(data.error ?? "승인 실패"); return; }
-      router.push("/review");
-      router.refresh();
+      if (!res.ok || !data.ok) {
+        alert(data.error ?? "처리에 실패했습니다.");
+        return false;
+      }
+      return true;
     } finally {
       setBusy(false);
     }
   }
 
+  async function approve() {
+    // 미해소 행 반려가 있는데 승인하면 반려가 모두 해소됨 → 확인
+    if (view.openRejectCount > 0 && !window.confirm(`반려한 업무 ${view.openRejectCount}건이 있습니다. 승인하면 반려가 모두 해제됩니다. 그래도 승인할까요?`))
+      return;
+    if (await call(`/api/reviews/${view.reportId}/approve`, { method: "POST" })) {
+      router.push("/review");
+      router.refresh();
+    }
+  }
+
   async function reject() {
-    if (!comment.trim()) { alert("그룹장 코멘트를 입력해 주세요."); return; }
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/reviews/${view.reportId}/reject`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comment, target }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) { alert(data.error ?? "반려 실패"); return; }
+    if (!comment.trim() && view.openRejectCount === 0) {
+      alert("반려 사유를 입력하거나 업무 행을 반려해 주세요.");
+      return;
+    }
+    const ok = await call(`/api/reviews/${view.reportId}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment, target }),
+    });
+    if (ok) {
       setRejectOpen(false);
       router.push("/review");
       router.refresh();
-    } finally {
-      setBusy(false);
     }
+  }
+
+  async function submitRowReject(taskId: number) {
+    if (!rowComment.trim()) {
+      alert("반려 사유를 입력해 주세요.");
+      return;
+    }
+    const ok = await call(`/api/tasks/${taskId}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: rowComment }),
+    });
+    if (ok) {
+      setRowRejectId(null);
+      setRowComment("");
+      router.refresh();
+    }
+  }
+
+  async function undoRowReject(taskId: number) {
+    if (await call(`/api/tasks/${taskId}/reject`, { method: "DELETE" })) router.refresh();
+  }
+
+  function TaskRow({ t, zone }: { t: ReviewTask; zone: string }) {
+    const m = statusMeta(t.status);
+    const rejected = !!t.rejectComment;
+    return (
+      <div data-testid="review-task-row" data-task-id={t.id} style={{ padding: "11px 0", borderBottom: "1px solid #F2F3F6", boxShadow: rejected ? "inset 3px 0 0 #DC2626" : t.status === "지연" ? "inset 3px 0 0 #F6D9A8" : "none", paddingLeft: rejected || t.status === "지연" ? 10 : 0 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {t.project && <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 6, padding: "2px 7px" }}>{t.project}</span>}
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{t.title}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{t.status}</span>
+              {t.isNight && <span style={{ fontSize: 11, fontWeight: 600, color: "#8A6508", background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 6, padding: "2px 7px" }}>🌙 야간</span>}
+              {t.doneTime && <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", background: "#F1F2F4", borderRadius: 6, padding: "2px 7px" }} className="tnum">✓ 마감 {t.doneTime}</span>}
+            </div>
+            {(t.plannedMin || t.actualMin) && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 3 }} className="tnum">{t.plannedMin ? `계획 ${t.plannedMin}분` : ""}{t.actualMin ? ` / 실제 ${t.actualMin}분` : ""}</div>}
+            {t.hold && <div style={{ fontSize: 12, color: "#B45309", marginTop: 5 }}>지연 사유 · {t.hold}</div>}
+            {t.attachments.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                {t.attachments.map((a) =>
+                  a.kind === "file" ? (
+                    <a key={a.id} href={`/api/attachments/${a.id}`} style={reviewChipLink} title={a.comment ?? undefined}>📎 {a.fileName}{a.comment ? ` · ${a.comment}` : ""}</a>
+                  ) : (
+                    <a key={a.id} href={a.url ?? "#"} target="_blank" rel="noreferrer" style={reviewChipLink} title={a.comment ?? a.url ?? undefined}>🔗 {a.comment || a.url}</a>
+                  ),
+                )}
+              </div>
+            )}
+            {rejected && (
+              <div data-testid="row-reject-band" style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#B91C1C", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 7, padding: "7px 10px", marginTop: 8 }}>
+                <span style={{ fontWeight: 700 }}>↩ 반려</span>
+                <span style={{ flex: 1 }}>{t.rejectComment}{t.rejectedBy ? ` · ${t.rejectedBy}` : ""}</span>
+                {view.reviewable && t.rejectedBy === view.reviewerName && (
+                  <button onClick={() => undoRowReject(t.id)} disabled={busy} data-testid={`row-reject-undo-${t.id}`} style={{ flex: "none", background: "none", border: "none", color: "#B91C1C", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>취소</button>
+                )}
+              </div>
+            )}
+            {rowRejectId === t.id && (
+              <div style={{ marginTop: 8, border: "1px solid #F5C2C2", borderRadius: 8, background: "#FFF7F7", padding: 12 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                  {REJECT_TEMPLATES.map((tpl) => (
+                    <button key={tpl} onClick={() => setRowComment(tpl)} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 9999, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#3A4150" }}>{tpl}</button>
+                  ))}
+                </div>
+                <textarea value={rowComment} onChange={(e) => setRowComment(e.target.value)} data-testid="row-reject-comment" placeholder="이 업무를 반려하는 사유를 적어주세요." style={{ width: "100%", minHeight: 64, border: "1px solid #CBD0D9", borderRadius: 8, padding: 10, fontFamily: "inherit", fontSize: 13, resize: "vertical", outline: "none" }} />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                  <button onClick={() => { setRowRejectId(null); setRowComment(""); }} style={{ height: 34, padding: "0 14px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>취소</button>
+                  <button onClick={() => submitRowReject(t.id)} disabled={busy} data-testid={`row-reject-confirm-${t.id}`} style={{ height: 34, padding: "0 14px", border: "none", borderRadius: 8, background: rowComment.trim() ? "#DC2626" : "#E2E5EB", color: rowComment.trim() ? "#fff" : "#9AA1AE", fontFamily: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>이 업무 반려</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <CommentButton count={t.commentCount} unread={t.commentUnread} onClick={() => openDrawer(t, zone)} />
+          {view.reviewable && !rejected && rowRejectId !== t.id && (
+            <button onClick={() => { setRowRejectId(t.id); setRowComment(""); }} data-testid={`row-reject-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #F5C2C2", color: "#DC2626", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>반려</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function Bucket({ testid, name, range, tasks, zone }: { testid: string; name: string; range: string; tasks: ReviewTask[]; zone: string }) {
+    if (tasks.length === 0) return null;
+    return (
+      <div data-testid={testid} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#FAFBFC" }}>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>{name}</span>
+          <span style={{ fontSize: 12, color: "#9AA1AE" }} className="tnum">{range}</span>
+          <div style={{ flex: 1 }} />
+          <span className="badge" style={{ color: "#3A4150", background: "#F1F2F4", border: "1px solid #D9DCE2" }}>{tasks.length}건</span>
+        </div>
+        <div style={{ padding: "6px 18px 14px" }}>
+          {tasks.map((t) => <TaskRow key={t.id} t={t} zone={zone} />)}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -106,9 +244,8 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
         <span style={{ fontSize: 12, color: "#6B7280" }}>검수자 <strong style={{ color: "#3A4150" }}>{view.reviewerName}</strong></span>
       </div>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px 100px", display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, alignItems: "start" }} className="review-grid">
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px 100px", display: "grid", gridTemplateColumns: "1fr 360px", gap: 24, alignItems: "start" }} className="review-grid">
         <div>
-          {/* 헤더 카드 */}
           <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "18px 22px", marginBottom: 20 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ width: 40, height: 40, borderRadius: 9999, background: "#E0E7FF", color: "#2F49B0", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{view.ownerName.slice(0, 1)}</div>
@@ -116,69 +253,52 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{view.ownerName} <span style={{ fontSize: 13, color: "#6B7280", fontWeight: 400 }}>{view.dept}</span></div>
                 <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }} className="tnum">{view.dateLabel}</div>
               </div>
-              <span data-testid="review-status" style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: statusMeta(view.status).bg, border: `1px solid ${statusMeta(view.status).line}`, color: statusMeta(view.status).main }}>{view.status}</span>
+              <span data-testid="review-status" className="badge" style={{ background: statusMeta(view.status).bg, border: `1px solid ${statusMeta(view.status).line}`, color: statusMeta(view.status).main }}>{view.status}</span>
             </div>
           </div>
 
           {view.isVacation ? (
-            <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "40px 24px", textAlign: "center" }}>
-              <div style={{ fontSize: 17, fontWeight: 700 }}>휴가일입니다 ({view.vacationType ?? "휴가"})</div>
-              <div style={{ fontSize: 13, color: "#6B7280", marginTop: 6 }}>휴가 보고서도 확인이 필요합니다. 승인 또는 반려해 주세요.</div>
+            <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "28px 24px" }}>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>{view.vacationType === "휴직" ? "휴직입니다" : `휴가일입니다 (${view.vacationType ?? "휴가"})`}</div>
+              <div style={{ fontSize: 13, color: "#6B7280", marginTop: 6 }}>휴가/휴직 보고서도 확인이 필요합니다. 승인 또는 반려해 주세요.</div>
+              {view.vacationComment && (
+                <div style={{ background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 10, padding: "12px 14px", marginTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#8A6508" }}>부재 사유</div>
+                  <div style={{ fontSize: 13, color: "#6B5316", lineHeight: "20px", marginTop: 8, whiteSpace: "pre-wrap" }}>{view.vacationComment}</div>
+                </div>
+              )}
             </div>
           ) : (
             <>
-              {view.nightReason && (
-                <div style={{ background: "#FBF4DA", border: "1px solid #EFE0A6", borderLeft: "3px solid #B7860B", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#8A6508" }}>🌙 야간 업무 사유</div>
-                  <div style={{ fontSize: 13, color: "#6B5316", marginTop: 7 }}>{view.nightReason}</div>
-                </div>
+              {view.model === 2 && view.buckets ? (
+                <>
+                  <Bucket testid="review-bucket-todo" name="미완료 · 진행 중" range="" tasks={view.buckets.todo} zone="오늘 할 일" />
+                  <Bucket testid="review-bucket-am" name="오전" range="00:00 ~ 11:59" tasks={view.buckets.am} zone="오전" />
+                  <Bucket testid="review-bucket-pm" name="오후" range="12:00 ~ 19:59" tasks={view.buckets.pm} zone="오후" />
+                  <Bucket testid="review-bucket-night" name="🌙 야간" range="20:00 ~" tasks={view.buckets.night} zone="야간" />
+                </>
+              ) : (
+                (view.sections ?? []).filter((s) => s.tasks.length > 0).map((sec) => (
+                  <div key={sec.kind} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }} data-testid={`review-section-${sec.kind}`}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#FAFBFC" }}>
+                      <span style={{ fontSize: 15, fontWeight: 600 }}>{sec.name}</span>
+                      <div style={{ flex: 1 }} />
+                      <span className="badge" style={{ background: statusMeta(sec.status).bg, border: `1px solid ${statusMeta(sec.status).line}`, color: statusMeta(sec.status).main }}>{sec.status}</span>
+                    </div>
+                    <div style={{ padding: "6px 18px 14px" }}>
+                      {sec.tasks.map((t) => <TaskRow key={t.id} t={t} zone={sec.name} />)}
+                    </div>
+                  </div>
+                ))
               )}
-              {view.sections.filter((s) => s.tasks.length > 0).map((sec) => (
-                <div key={sec.kind} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }} data-testid={`review-section-${sec.kind}`}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#FAFBFC" }}>
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>{sec.name}</span>
-                    <div style={{ flex: 1 }} />
-                    <span style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 6, background: statusMeta(sec.status).bg, border: `1px solid ${statusMeta(sec.status).line}`, color: statusMeta(sec.status).main }}>{sec.status}</span>
-                  </div>
-                  <div style={{ padding: "6px 18px 14px" }}>
-                    {sec.tasks.map((t, i) => {
-                      const m = statusMeta(t.status);
-                      return (
-                        <div key={i} style={{ display: "flex", gap: 10, padding: "11px 0", borderBottom: "1px solid #F2F3F6", boxShadow: t.status === "지연" ? "inset 3px 0 0 #DC2626" : "none" }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                              {t.project && <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 6, padding: "2px 7px" }}>{t.project}</span>}
-                              <span style={{ fontSize: 14, fontWeight: 600 }}>{t.title}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{t.status}</span>
-                            </div>
-                            {(t.plannedMin || t.actualMin) && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 3 }} className="tnum">{t.plannedMin ? `계획 ${t.plannedMin}분` : ""}{t.actualMin ? ` / 실제 ${t.actualMin}분` : ""}</div>}
-                            {t.hold && <div style={{ fontSize: 12, color: "#B45309", marginTop: 5 }}>지연 사유 · {t.hold}</div>}
-                            {t.attachments.length > 0 && (
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                                {t.attachments.map((a) =>
-                                  a.kind === "file" ? (
-                                    <a key={a.id} href={`/api/attachments/${a.id}`} style={reviewChipLink} title={a.comment ?? undefined}>📎 {a.fileName}{a.comment ? ` · ${a.comment}` : ""}</a>
-                                  ) : (
-                                    <a key={a.id} href={a.url ?? "#"} target="_blank" rel="noreferrer" style={reviewChipLink} title={a.comment ?? a.url ?? undefined}>🔗 {a.comment || a.url}</a>
-                                  ),
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
 
               {view.comms.length > 0 && (
                 <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", marginBottom: 16 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>커뮤니케이션 기록</div>
                   {view.comms.map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 10, padding: "9px 0", borderBottom: "1px solid #F2F3F6" }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 9999, padding: "3px 9px" }}>{c.type}</span>
-                      <div><div style={{ fontSize: 13 }}><strong>{c.counterpart}</strong> · <span className="tnum" style={{ color: "#6B7280" }}>{c.time}</span></div><div style={{ fontSize: 13, color: "#3A4150" }}>{c.summary}</div></div>
+                      <span className="badge badge-comm" style={{ flex: "none" }}>{c.type}</span>
+                      <div><div style={{ fontSize: 13 }}><strong>{c.counterpart}</strong>{c.time ? <> · <span className="tnum" style={{ color: "#6B7280" }}>{c.time}</span></> : null}</div><div style={{ fontSize: 13, color: "#3A4150" }}>{c.summary}</div></div>
                     </div>
                   ))}
                 </div>
@@ -187,32 +307,16 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
               {view.dailyComment && (
                 <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px" }}>
                   <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>일일 코멘트</div>
-                  <div style={{ borderLeft: "3px solid #E2E5EB", paddingLeft: 12, fontSize: 14, color: "#3A4150" }}>{view.dailyComment}</div>
+                  <div style={{ borderLeft: "3px solid #E2E5EB", paddingLeft: 12, fontSize: 14, color: "#3A4150", whiteSpace: "pre-wrap" }}>{view.dailyComment}</div>
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* 사이드 */}
-        <div>
-          {/* AI 분석 (v1 미개발) */}
-          <div style={{ background: "#F3F0FE", border: "1px solid #E4DCFB", borderLeft: "3px solid #7C5CFC", borderRadius: 12, padding: 18, marginBottom: 16 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#5B3FD1" }}>✦ AI 분석 결과</div>
-            <div style={{ fontSize: 11, color: "#8B7FC4", marginTop: 3 }}>이번 버전 미개발 · 영역 예약</div>
-            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-              {["효율성", "연속성", "연관성"].map((k) => (
-                <div key={k}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9AA1AE", marginBottom: 6 }}><span>{k}</span><span>—</span></div>
-                  <div style={{ height: 6, background: "#EAE3FC", borderRadius: 9999 }} />
-                </div>
-              ))}
-            </div>
-            <div style={{ fontSize: 11, color: "#8B7FC4", marginTop: 14 }}>효율성·연속성·연관성 분석은 다음 버전에서 제공됩니다. 검수는 AI 없이도 진행할 수 있어요.</div>
-          </div>
-
-          {/* 검수 이력 */}
-          <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px" }}>
+        {/* 사이드 (검수 이력 → 야간 상태 → AI 패널 순, 디자인 §4.4) */}
+        <div className="rv-side">
+          <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>검수 이력</div>
             {view.events.length === 0 && <div style={{ fontSize: 13, color: "#9AA1AE" }}>이력이 없습니다.</div>}
             {view.events.map((e, i) => (
@@ -226,45 +330,91 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
               </div>
             ))}
           </div>
+
+          {!view.isVacation && (
+            <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>야간 업무</div>
+              {view.nightReason ? (
+                <div style={{ fontSize: 13, color: "#6B5316", background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 8, padding: "8px 10px" }}>🌙 {view.nightReason}</div>
+              ) : (
+                <div style={{ fontSize: 13, color: "#9AA1AE" }}>야간 업무 없음</div>
+              )}
+            </div>
+          )}
+
+          <div style={{ background: "#F3F0FE", border: "1px solid #E4DCFB", borderLeft: "3px solid #7C5CFC", borderRadius: 12, padding: 18 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#5B3FD1" }}>✦ AI 분석 결과</div>
+            <div style={{ fontSize: 11, color: "#8B7FC4", marginTop: 3 }}>이번 버전 미개발 · 영역 예약</div>
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+              {["효율성", "연속성", "연관성"].map((k) => (
+                <div key={k}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9AA1AE", marginBottom: 6 }}><span>{k}</span><span>—</span></div>
+                  <div style={{ height: 6, background: "#EAE3FC", borderRadius: 9999 }} />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
+      {/* 댓글 드로어 */}
+      {drawer && <CommentDrawer key={drawer.id} task={drawer} role={view.viewerRole} onClose={() => setDrawer(null)} onChanged={() => router.refresh()} />}
+
       {/* 액션바 */}
-      {view.pending && (
+      {view.pending ? (
         <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,.94)", borderTop: "1px solid #E2E5EB", padding: "12px 24px" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", gap: 12 }}>
+            {view.openRejectCount > 0 && <span style={{ fontSize: 13, color: "#B91C1C", fontWeight: 600 }} data-testid="open-reject-count">행 반려 {view.openRejectCount}건</span>}
             <div style={{ flex: 1 }} />
-            <button onClick={() => setRejectOpen(true)} disabled={busy} data-testid="reject-open" style={{ height: 44, padding: "0 22px", border: "1px solid #F5C2C2", borderRadius: 8, background: "#fff", color: "#DC2626", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>반려</button>
+            <button onClick={() => setRejectOpen(true)} disabled={busy} data-testid="reject-open" style={{ height: 44, padding: "0 22px", border: "1px solid #F5C2C2", borderRadius: 8, background: "#fff", color: "#DC2626", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{view.openRejectCount > 0 ? "부분 반려로 회신" : "반려"}</button>
             <button onClick={approve} disabled={busy} data-testid="approve" style={{ height: 44, padding: "0 28px", border: "none", borderRadius: 8, background: "#1F9254", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>승인</button>
           </div>
         </div>
-      )}
+      ) : view.reviewable ? (
+        <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,.94)", borderTop: "1px solid #E2E5EB", padding: "12px 24px" }} data-testid="plan-review-bar">
+          <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#6B7280" }}>
+            <span style={{ fontWeight: 600, color: "#3A4150" }}>계획 제출됨</span>
+            <span>개별 업무를 검토·반려할 수 있어요. 전체 승인/반려는 최종 제출 후 가능합니다.</span>
+            {view.openRejectCount > 0 && <span style={{ marginLeft: "auto", color: "#B91C1C", fontWeight: 600 }} data-testid="open-reject-count">행 반려 {view.openRejectCount}건</span>}
+          </div>
+        </div>
+      ) : null}
 
-      {/* 반려 모달 */}
+      {/* 전체/회신 반려 모달 */}
       {rejectOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,24,40,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "90vh", overflow: "auto" }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "90vh", overflow: "auto" }} data-testid="reject-modal">
             <div style={{ display: "flex", justifyContent: "space-between", padding: "18px 22px", borderBottom: "1px solid #EFF1F5" }}>
-              <span style={{ fontSize: 16, fontWeight: 700 }}>보고서 반려</span>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>{view.openRejectCount > 0 ? "부분 반려로 회신" : "보고서 반려"}</span>
               <button onClick={() => setRejectOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9AA1AE", fontSize: 20 }}>✕</button>
             </div>
             <div style={{ padding: "18px 22px" }}>
+              {view.openRejectCount > 0 && (
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 10, padding: "11px 14px", marginBottom: 16 }}>
+                  <span style={{ color: "#DC2626" }}>↩</span>
+                  <div style={{ fontSize: 13, color: "#B91C1C", lineHeight: "19px" }}>반려한 업무 {view.openRejectCount}건을 작성자에게 돌려보냅니다. 전체 코멘트는 선택입니다.</div>
+                </div>
+              )}
+              {view.model === 1 && (
+                <>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>대상 지목</label>
+                  <select value={target} onChange={(e) => setTarget(e.target.value)} data-testid="reject-target" style={{ width: "100%", height: 40, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 10px", fontFamily: "inherit", fontSize: 14, marginBottom: 16, background: "#fff" }}>
+                    {["전체", "오전", "오후", "야간"].map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </>
+              )}
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 8 }}>자주 쓰는 사유</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                 {REJECT_TEMPLATES.map((t) => (
                   <button key={t} onClick={() => setComment(t)} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 9999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#3A4150" }}>{t}</button>
                 ))}
               </div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>대상 지목</label>
-              <select value={target} onChange={(e) => setTarget(e.target.value)} data-testid="reject-target" style={{ width: "100%", height: 40, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 10px", fontFamily: "inherit", fontSize: 14, marginBottom: 16, background: "#fff" }}>
-                {["전체", "오전", "오후", "야간"].map((t) => <option key={t}>{t}</option>)}
-              </select>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>그룹장 코멘트 <span style={{ color: "#DC2626" }}>*</span></label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>전체 코멘트 {view.openRejectCount > 0 ? <span style={{ color: "#9AA1AE" }}>(선택)</span> : <span style={{ color: "#DC2626" }}>*</span>}</label>
               <textarea value={comment} onChange={(e) => setComment(e.target.value)} data-testid="reject-comment" placeholder="예) 오후 업무 계획이 누락되었습니다. 14시 이후 일정을 추가해 주세요." style={{ width: "100%", minHeight: 96, border: "1px solid #CBD0D9", borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", padding: "14px 22px", borderTop: "1px solid #EFF1F5" }}>
               <button onClick={() => setRejectOpen(false)} style={{ height: 40, padding: "0 16px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
-              <button onClick={reject} disabled={busy} data-testid="reject-submit" style={{ height: 40, padding: "0 18px", border: "none", borderRadius: 8, background: comment.trim() ? "#DC2626" : "#E2E5EB", color: comment.trim() ? "#fff" : "#9AA1AE", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>반려하고 코멘트 전달</button>
+              <button onClick={reject} disabled={busy} data-testid="reject-submit" style={{ height: 40, padding: "0 18px", border: "none", borderRadius: 8, background: comment.trim() || view.openRejectCount > 0 ? "#DC2626" : "#E2E5EB", color: comment.trim() || view.openRejectCount > 0 ? "#fff" : "#9AA1AE", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{view.openRejectCount > 0 ? "회신하기" : "반려하고 코멘트 전달"}</button>
             </div>
           </div>
         </div>

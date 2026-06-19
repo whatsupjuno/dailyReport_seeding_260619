@@ -57,6 +57,12 @@ async function assertPending(c: import("pg").PoolClient, reportId: number): Prom
 export async function approveReport(reportId: number, reviewerId: number): Promise<void> {
   await tx(async (c) => {
     await assertPending(c, reportId);
+    // 승인 시 미해소 행 반려는 무의미 → 해소 처리(표시 초기화)
+    await c.query(
+      `UPDATE task_rejections SET resolved_at=now() WHERE report_id=$1 AND resolved_at IS NULL`,
+      [reportId],
+    );
+    await c.query(`UPDATE tasks SET reject_state=NULL WHERE report_id=$1 AND reject_state='반려'`, [reportId]);
     await c.query(`UPDATE daily_reports SET status='승인', updated_at=now() WHERE id=$1`, [reportId]);
     await c.query(
       `INSERT INTO report_events(report_id, kind, actor_user_id) VALUES ($1,'approved',$2)`,
@@ -74,6 +80,7 @@ export async function rejectReport(
 ): Promise<void> {
   await tx(async (c) => {
     await assertPending(c, reportId);
+    // v1 레거시: 지목 시간대 섹션 잠금 해제(v2는 섹션 없으므로 0행)
     const kinds = targetKinds(target);
     await c.query(
       `UPDATE report_sections SET status='재작성', locked=false
@@ -81,10 +88,15 @@ export async function rejectReport(
       [reportId, kinds],
     );
     await c.query(`UPDATE daily_reports SET status='반려', updated_at=now() WHERE id=$1`, [reportId]);
-    await c.query(
+    const ev = await c.query<{ id: number }>(
       `INSERT INTO report_events(report_id, kind, actor_user_id, comment, reject_target)
-       VALUES ($1,'rejected',$2,$3,$4)`,
+       VALUES ($1,'rejected',$2,$3,$4) RETURNING id`,
       [reportId, reviewerId, comment, target],
+    );
+    // 부분 반려 회신: 미해소 행 반려를 이 회신 회차에 묶음(A-1)
+    await c.query(
+      `UPDATE task_rejections SET event_id=$2 WHERE report_id=$1 AND resolved_at IS NULL AND event_id IS NULL`,
+      [reportId, ev.rows[0].id],
     );
   });
 }
@@ -94,23 +106,28 @@ export interface ReviewListItem {
   name: string;
   dept: string | null;
   report_date: string;
+  status?: string;
 }
 
 export async function reviewQueueForReviewer(reviewer: UserRow): Promise<ReviewListItem[]> {
   if (reviewer.role === "admin") {
     // admin도 본인 보고서는 셀프검수 불가 → 제외
     return query<ReviewListItem>(
-      `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date
+      `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+              r.status
          FROM daily_reports r JOIN users u ON u.id=r.user_id LEFT JOIN groups g ON g.id=u.group_id
-        WHERE r.status='검수대기' AND r.user_id <> $1 ORDER BY r.submitted_at NULLS LAST, r.id`,
+        WHERE r.status IN ('검수대기','계획제출') AND r.user_id <> $1
+        ORDER BY COALESCE(r.submitted_at, r.plan_submitted_at) NULLS LAST, r.id`,
       [reviewer.id],
     );
   }
-  // group_leader: 자기 그룹, 본인 제외
+  // group_leader: 자기 그룹, 본인 제외. C2: 계획제출도 행 단위 검토 가능 → 큐 노출
   return query<ReviewListItem>(
-    `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date
+    `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+            r.status
        FROM daily_reports r JOIN users u ON u.id=r.user_id JOIN groups g ON g.id=u.group_id
-      WHERE r.status='검수대기' AND g.leader_user_id=$1 AND u.id <> $1 ORDER BY r.submitted_at NULLS LAST, r.id`,
+      WHERE r.status IN ('검수대기','계획제출') AND g.leader_user_id=$1 AND u.id <> $1
+      ORDER BY COALESCE(r.submitted_at, r.plan_submitted_at) NULLS LAST, r.id`,
     [reviewer.id],
   );
 }

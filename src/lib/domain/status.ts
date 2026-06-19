@@ -6,6 +6,7 @@ export type DerivedTaskStatus = TaskStatus | "지연임박";
 export type ReportStatus =
   | "미작성"
   | "작성중"
+  | "계획제출" // C2: 2단계 제출(아침 계획 제출 후 마감 전). v2 전용 — 레거시 미사용.
   | "제출완료"
   | "재제출"
   | "검수대기"
@@ -15,7 +16,11 @@ export type ReportStatus =
 
 export type SectionKind = "plan" | "morning" | "afternoon" | "night";
 
-export type WriteMode =
+// v2 작성 모드(단일목록 모델). status + 휴가 플래그만으로 결정 — 섹션 비의존.
+export type WriteMode = "work" | "view" | "rejected" | "vacation";
+
+// v1 레거시(섹션 순차 모델) 작성 모드. legacy.ts 전용.
+export type LegacyWriteMode =
   | "morningPlan"
   | "morningClose"
   | "afternoonClose"
@@ -26,8 +31,8 @@ export type WriteMode =
 
 export type ReviewAction = "approve" | "reject";
 export type RejectTarget = "전체" | "오전" | "오후" | "야간";
-export type VacationType = "연차" | "반차" | "병가" | "공가" | "기타";
-export type CommType = "통화" | "메일" | "회의" | "카톡" | "구두";
+export type VacationType = "연차" | "반차" | "병가" | "공가" | "휴직" | "기타";
+export type CommType = "통화" | "메일" | "회의" | "카톡" | "구두" | "메신저";
 export type UserRole = "employee" | "group_leader" | "admin";
 
 export interface StatusMeta {
@@ -50,6 +55,7 @@ export const STATUS_META: Record<string, StatusMeta> = {
   미작성: { main: "#6B7280", bg: "#F7F8FA", line: "#E2E5EB", icon: "·" },
   계획: { main: "#6B7280", bg: "#F7F8FA", line: "#E2E5EB", icon: "·" },
   작성중: { main: "#2563EB", bg: "#E6EEFD", line: "#BBD0F7", icon: "◔" },
+  계획제출: { main: "#2563EB", bg: "#E6EEFD", line: "#BBD0F7", icon: "▸" },
   제출완료: { main: "#2563EB", bg: "#E6EEFD", line: "#BBD0F7", icon: "◔" },
   재제출: { main: "#2563EB", bg: "#E6EEFD", line: "#BBD0F7", icon: "↻" },
   마감완료: { main: "#1F9254", bg: "#E7F6EC", line: "#BBE5C8", icon: "✓" },

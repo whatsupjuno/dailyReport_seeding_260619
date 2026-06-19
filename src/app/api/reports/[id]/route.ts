@@ -18,7 +18,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     dailyComment?: string;
     nightReason?: string;
     noCommunication?: boolean;
+    nightHas?: boolean;
   };
+  if ((body.dailyComment?.length ?? 0) > 10000) return badRequest("일일 코멘트는 최대 10,000자입니다.");
+  if ((body.nightReason?.length ?? 0) > 10000) return badRequest("야간 사유는 최대 10,000자입니다.");
   try {
     await saveDraft(reportId, body);
     return NextResponse.json({ ok: true });

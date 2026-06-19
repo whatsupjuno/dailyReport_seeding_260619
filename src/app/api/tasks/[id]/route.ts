@@ -26,8 +26,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    if ((e as Error).message === "LOCKED_SECTION")
-      return badRequest("마감된 시간대의 업무는 변경할 수 없습니다.");
+    const m = (e as Error).message;
+    if (m === "LOCKED_TASK") return badRequest("제출된 보고서의 업무는 변경할 수 없습니다.");
+    if (m === "BAD_STATUS") return badRequest("완결/지연은 '마감'으로 처리해 주세요.");
+    if (m === "NOT_FOUND") return badRequest("업무를 찾을 수 없습니다.");
     throw e;
   }
 }

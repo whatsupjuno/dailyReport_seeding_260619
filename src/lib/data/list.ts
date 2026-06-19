@@ -36,8 +36,8 @@ export async function listScopeReports(opts: {
          SELECT t.report_id, count(*) AS total,
                 count(*) FILTER (WHERE t.status='완결') AS done,
                 count(*) FILTER (WHERE t.status='지연') AS delayed
-           FROM tasks t JOIN report_sections s ON s.id=t.section_id
-          WHERE s.kind <> 'plan'
+           FROM tasks t LEFT JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind IS NULL OR s.kind <> 'plan'  -- v2(section_id NULL) 포함, v1 plan 섹션만 제외
           GROUP BY t.report_id
        ) tc ON tc.report_id = r.id
       WHERE ${where}
@@ -68,8 +68,8 @@ export async function listMyReports(userId: number, limit = 30): Promise<EmpRow[
          SELECT t.report_id, count(*) AS total,
                 count(*) FILTER (WHERE t.status='완결') AS done,
                 count(*) FILTER (WHERE t.status='지연') AS delayed
-           FROM tasks t JOIN report_sections s ON s.id=t.section_id
-          WHERE s.kind <> 'plan'
+           FROM tasks t LEFT JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind IS NULL OR s.kind <> 'plan'  -- v2(section_id NULL) 포함, v1 plan 섹션만 제외
           GROUP BY t.report_id
        ) tc ON tc.report_id = r.id
       WHERE r.user_id = $1

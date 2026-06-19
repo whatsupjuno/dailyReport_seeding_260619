@@ -119,7 +119,7 @@ export default function AppShell({ user, children }: { user: ShellUser; children
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+      <div className="app-shell" style={{ alignItems: "flex-start" }}>
         {/* LNB (PC) */}
         <aside
           className="pc-only"

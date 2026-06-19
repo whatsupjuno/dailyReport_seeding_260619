@@ -13,6 +13,16 @@ async function main() {
   await client.connect();
 
   try {
+    // 0006의 ALTER TYPE ... ADD VALUE는 PG 12+에서만 트랜잭션 블록 내 실행 가능(파일당 BEGIN/COMMIT).
+    const ver = await client.query<{ n: string }>(
+      "SELECT current_setting('server_version_num') AS n",
+    );
+    if (Number(ver.rows[0]?.n ?? 0) < 120000) {
+      throw new Error(
+        `PostgreSQL 12+ required (found ${ver.rows[0]?.n}). 0006 enum ADD VALUE는 트랜잭션 블록에서 PG12+ 필요.`,
+      );
+    }
+
     if (reset) {
       console.log("[migrate] DROP SCHEMA public CASCADE; recreate");
       await client.query("DROP SCHEMA IF EXISTS public CASCADE;");

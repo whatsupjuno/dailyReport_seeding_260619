@@ -1,33 +1,17 @@
-import type { ReportStatus, SectionKind, WriteMode } from "./status";
-
-export type SectionStatusMap = Partial<Record<SectionKind, string>>;
+import type { ReportStatus, WriteMode } from "./status";
 
 /**
- * 보고서 상태 + 시간대 마감 여부로 작성 모드를 결정 (상태 기반, 벽시계 비의존).
- * - 메일 스케줄(시각 기반)은 별도. 앱 내 진행은 plan→morning→afternoon→night 순차 마감.
+ * v2 단일목록 모델의 작성 모드 결정 (status + 휴가 플래그만, 섹션·벽시계 비의존).
+ * - work: 미작성/작성중/계획제출 — 오늘 할 일 편집·마감·추가 가능(계획제출도 편집 자유, D3).
+ * - view: 검수대기/승인/제출완료/재제출 — 읽기 전용.
+ * - rejected: 반려 — 미해소 반려 행만 편집.
+ * - vacation: 휴가/휴직 작성.
+ * 우선순위: 반려 > 제출이후(view) > 휴가 > work. (반려가 휴가보다 우선 — 레거시 계승)
  */
-export function computeWriteMode(
-  status: ReportStatus,
-  isVacation: boolean,
-  sec: SectionStatusMap,
-): WriteMode {
+export function computeWriteMode(status: ReportStatus, isVacation: boolean): WriteMode {
   if (status === "반려") return "rejected";
   if (status === "검수대기" || status === "제출완료" || status === "승인" || status === "재제출")
     return "view";
   if (isVacation) return "vacation";
-
-  const closed = (k: SectionKind) => sec[k] === "마감완료";
-  if (!closed("plan")) return "morningPlan";
-  if (!closed("morning")) return "morningClose";
-  if (!closed("afternoon")) return "afternoonClose";
-  return "nightClose";
-}
-
-/** 모드에서 '최종 제출'이 일어나는지 (제출 버튼이 검수대기로 보내는지) */
-export function isSubmitMode(mode: WriteMode, nightBranch: "yes" | "no" | null): boolean {
-  if (mode === "afternoonClose") return nightBranch !== "yes";
-  if (mode === "nightClose") return true;
-  if (mode === "rejected") return true;
-  if (mode === "vacation") return true;
-  return false;
+  return "work"; // 미작성 | 작성중 | 계획제출
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
 import { canReview, getReviewOwner, rejectReport } from "@/lib/data/review";
+import { getOpenTaskRejectCount } from "@/lib/data/task-rejections";
 
 const TARGETS = ["전체", "오전", "오후", "야간"];
 
@@ -17,7 +18,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = (await req.json().catch(() => ({}))) as { comment?: string; target?: string };
   const comment = (body.comment ?? "").trim();
   const target = TARGETS.includes(body.target ?? "") ? (body.target as string) : "전체";
-  if (!comment) return badRequest("반려 사유(그룹장 코멘트)를 입력해 주세요.");
+  if (comment.length > 10000) return badRequest("반려 코멘트는 최대 10,000자입니다.");
+  // 부분 반려로 회신: 미해소 행 반려가 1건 이상이면 전역 코멘트 비어도 허용(A-1)
+  const openRejects = await getOpenTaskRejectCount(reportId);
+  if (!comment && openRejects === 0)
+    return badRequest("반려 사유를 입력하거나 업무 행을 먼저 반려해 주세요.");
 
   try {
     await rejectReport(reportId, user.id, comment, target);

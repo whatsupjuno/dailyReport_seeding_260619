@@ -25,6 +25,14 @@ export const env = {
     secretKey: process.env.NCP_SECRET_KEY ?? "",
     domainVerification: process.env.NCP_MAILER_DOMAIN_VERIFICATION ?? "",
   },
+
+  // #4 단일목록 모델 컷오버 + 기능 플래그(domain/config.ts 에서 해석).
+  //  - SEEDING_MODEL_CUTOVER: 'YYYY-MM-DD'(KST). 미설정이면 전부 v2(신규 운영 기본).
+  //  - FEATURE_BUCKET_MODE: 'off' 면 v2 비활성(전부 레거시) — 단계 배포 1차용.
+  model: {
+    cutover: process.env.SEEDING_MODEL_CUTOVER ?? "",
+    bucketMode: process.env.FEATURE_BUCKET_MODE ?? "on",
+  },
 } as const;
 
 export const isProd = process.env.NODE_ENV === "production";

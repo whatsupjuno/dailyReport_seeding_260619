@@ -1,4 +1,6 @@
 import { query, queryOne, tx } from "../db";
+import { isV2Date } from "../domain/config";
+import { bucketTasks, type Buckets } from "../domain/classify";
 import type { ReportStatus, SectionKind, TaskStatus } from "../domain/status";
 
 export interface ReportRow {
@@ -15,6 +17,8 @@ export interface ReportRow {
   night_expected_end: string | null;
   no_communication: boolean;
   submitted_at: string | null;
+  model_version: number; // 1=레거시 섹션, 2=단일목록(v2)
+  plan_submitted_at: string | null; // C2 1차(계획) 제출 표식
 }
 
 export interface SectionRow {
@@ -28,7 +32,7 @@ export interface SectionRow {
 export interface TaskRow {
   id: number;
   report_id: number;
-  section_id: number;
+  section_id: number | null; // v2는 NULL(섹션 비의존)
   project: string | null;
   title: string;
   planned_start: string | null;
@@ -37,6 +41,10 @@ export interface TaskRow {
   status: TaskStatus;
   hold_reason: string | null;
   sort_order: number;
+  completed_at: string | null; // #4 마감 시각(KST 분류 기준)
+  is_night: boolean; // #4 야간 플래그
+  reject_state: string | null; // #3 NULL=정상, '반려'=행 반려
+  rejected_at: string | null;
 }
 
 export interface CommRow {
@@ -67,8 +75,13 @@ export interface FullReport {
   events: EventRow[];
 }
 
-/** 보고서가 없으면 생성(+plan 섹션). 있으면 그대로. report id 반환 */
+/**
+ * 보고서가 없으면 생성. 있으면 그대로. report id 반환.
+ * - v2(컷오버 이후/기본): model_version=2, plan 섹션 미생성(단일목록).
+ * - v1(컷오버 이전): 종전대로 model_version=1 + plan 섹션 생성(레거시 동결 렌더).
+ */
 export async function getOrCreateReport(userId: number, dateISO: string): Promise<number> {
+  const v2 = isV2Date(dateISO);
   return tx(async (c) => {
     const existing = await c.query<{ id: number }>(
       `SELECT id FROM daily_reports WHERE user_id = $1 AND report_date = $2`,
@@ -77,14 +90,17 @@ export async function getOrCreateReport(userId: number, dateISO: string): Promis
     if (existing.rows[0]) return existing.rows[0].id;
 
     const r = await c.query<{ id: number }>(
-      `INSERT INTO daily_reports(user_id, report_date, status) VALUES ($1,$2,'작성중') RETURNING id`,
-      [userId, dateISO],
+      `INSERT INTO daily_reports(user_id, report_date, status, model_version)
+         VALUES ($1,$2,'작성중',$3) RETURNING id`,
+      [userId, dateISO, v2 ? 2 : 1],
     );
     const reportId = r.rows[0].id;
-    await c.query(
-      `INSERT INTO report_sections(report_id, kind, status) VALUES ($1,'plan','작성중')`,
-      [reportId],
-    );
+    if (!v2) {
+      await c.query(
+        `INSERT INTO report_sections(report_id, kind, status) VALUES ($1,'plan','작성중')`,
+        [reportId],
+      );
+    }
     return reportId;
   });
 }
@@ -160,4 +176,9 @@ export function sectionStatusMap(sections: SectionRow[]): Partial<Record<Section
   const m: Partial<Record<SectionKind, string>> = {};
   for (const s of sections) m[s.kind] = s.status;
   return m;
+}
+
+/** #4 v2: 보고서 업무를 오늘 할 일 / 오전 / 오후 / 야간 버킷으로 분류 (야간은 night_has 토글) */
+export function bucketedTasks(full: FullReport): Buckets<TaskRow> {
+  return bucketTasks(full.tasks, full.report.night_has);
 }

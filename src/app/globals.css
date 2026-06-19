@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+@import url("https://fastly.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
 
 /* ===== 디자인 토큰 (Seeding 아티팩트 팔레트 계승) ===== */
 @theme {
@@ -67,6 +67,43 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ===== 배지 유틸 (브리프 §4.2: 높이 22px·라운드 6px 사각칩 — 원형 금지) =====
+   전역 box-sizing:border-box만 있어 인라인 9999 배지가 원형화되던 버그 방지.
+   width/height/aspect-ratio 명시로 외부 CSS 덮어쓰기 차단. 색은 인라인 또는 변형 클래스. */
+.badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: auto;
+  max-width: none;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  aspect-ratio: auto;
+}
+/* 커뮤니케이션 유형 배지 색(브리프 §4.2) */
+.badge-comm {
+  background: #eef2ff;
+  color: #2f49b0;
+}
+
+/* 포커스 링(키보드 접근성, 브리프 §7) */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 91, 219, 0.35);
+}
+
 /* 스크롤바 */
 ::-webkit-scrollbar {
   width: 10px;
@@ -88,6 +125,68 @@ body {
   animation: spin 0.7s linear infinite;
 }
 
+/* 댓글 드로어 슬라이드 인 + 배경 페이드(브리프 §5) */
+@keyframes cmtDrawerIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes cmtFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.cmt-drawer {
+  animation: cmtDrawerIn 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.cmt-backdrop {
+  animation: cmtFadeIn 0.2s ease;
+}
+@media (max-width: 720px) {
+  @keyframes cmtSheetIn {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+  .cmt-drawer {
+    top: auto !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-height: 86vh;
+    border-left: none !important;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    animation: cmtSheetIn 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+}
+
+/* 검수 사이드 sticky(≤1000px 해제) */
+.rv-side {
+  position: sticky;
+  top: 72px;
+  align-self: start;
+}
+@media (max-width: 1000px) {
+  .rv-side {
+    position: static;
+  }
+}
+
+/* 셸 레이아웃: 데스크톱 flex(LNB+본문), ≤720px block(상단 내비 위 + 본문 아래).
+   인라인 display:flex를 제거해야 미디어쿼리가 적용됨(§6.2 0폭 버그 수정). */
+.app-shell {
+  display: flex;
+}
+
 /* 반응형 표시 분기 (디자인 720px) */
 .pc-only {
   display: block;
@@ -95,7 +194,18 @@ body {
 .sm-only {
   display: none;
 }
+
+/* 검수 화면 grid: ≤1000px 1열(사이드 아래로) */
+@media (max-width: 1000px) {
+  .review-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 @media (max-width: 720px) {
+  .app-shell {
+    display: block;
+  }
   .pc-only {
     display: none !important;
   }

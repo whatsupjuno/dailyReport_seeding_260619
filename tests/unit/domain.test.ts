@@ -1,18 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { statusMeta, STATUS_META } from "@/lib/domain/status";
+import { computeCompletion, delayState, stepper2, writePrimaryLabel } from "@/lib/domain/report";
 import {
-  computeCompletion,
-  delayState,
-  editableSections,
-  stepperFor,
-  writePrimaryLabel,
-} from "@/lib/domain/report";
+  legacyEditableSections,
+  legacyStepperFor,
+  legacyWritePrimaryLabel,
+} from "@/lib/domain/legacy";
 
 describe("status meta", () => {
   it("완결/지연/검수대기 색이 디자인과 일치", () => {
     expect(statusMeta("완결").main).toBe("#1F9254");
     expect(statusMeta("지연").main).toBe("#DC2626");
     expect(statusMeta("검수대기").main).toBe("#B7860B");
+  });
+  it("계획제출(C2)은 파랑 계열(#2563EB)", () => {
+    expect(statusMeta("계획제출").main).toBe("#2563EB");
+    expect(statusMeta("계획제출").bg).toBe("#E6EEFD");
   });
   it("미정의 라벨은 미작성으로 폴백", () => {
     expect(statusMeta("없는상태")).toEqual(STATUS_META["미작성"]);
@@ -36,45 +39,79 @@ describe("computeCompletion", () => {
   });
 });
 
-describe("stepperFor", () => {
+describe("stepper2 (v2 2노드)", () => {
+  it("미제출이면 작성 current, 제출 노드 대기", () => {
+    const s = stepper2({ submitted: false, todoCount: 3, doneCount: 2 });
+    expect(s).toHaveLength(2);
+    expect(s[0].label).toBe("작성");
+    expect(s[0].current).toBe(true);
+    expect(s[0].done).toBe(false);
+    expect(s[0].sub).toBe("할 일 3 · 완료 2");
+    expect(s[1].label).toBe("제출");
+    expect(s[1].sub).toBe("미제출");
+  });
+  it("제출되면 두 노드 모두 done", () => {
+    const s = stepper2({ submitted: true, todoCount: 0, doneCount: 5 });
+    expect(s.every((n) => n.done)).toBe(true);
+    expect(s[1].current).toBe(true);
+  });
+});
+
+describe("writePrimaryLabel (v2, 2단계)", () => {
+  it("미작성/작성중 → 계획 제출(1차)", () => {
+    expect(writePrimaryLabel("미작성")).toBe("계획 제출");
+    expect(writePrimaryLabel("작성중")).toBe("계획 제출");
+  });
+  it("계획제출 → 제출하기(최종)", () => {
+    expect(writePrimaryLabel("계획제출")).toBe("제출하기");
+  });
+  it("반려 → 다시 제출", () => {
+    expect(writePrimaryLabel("반려")).toBe("다시 제출");
+  });
+  it("검수대기/승인 → 제출 완료", () => {
+    expect(writePrimaryLabel("검수대기")).toBe("제출 완료");
+    expect(writePrimaryLabel("승인")).toBe("제출 완료");
+  });
+});
+
+// v1 레거시 라벨/스테퍼/편집섹션 회귀 (model_version=1 동결 렌더용 — v1/v2 분리 B4)
+describe("legacyStepperFor (v1)", () => {
   it("afternoonClose는 계획·오전 완결, 오후 current", () => {
-    const s = stepperFor("afternoonClose");
+    const s = legacyStepperFor("afternoonClose");
     expect(s.find((n) => n.kind === "plan")!.state).toBe("완결");
     expect(s.find((n) => n.kind === "morning")!.state).toBe("완결");
     expect(s.find((n) => n.kind === "afternoon")!.current).toBe(true);
   });
   it("vacation은 전부 휴가", () => {
-    expect(stepperFor("vacation").every((n) => n.state === "휴가")).toBe(true);
+    expect(legacyStepperFor("vacation").every((n) => n.state === "휴가")).toBe(true);
   });
   it("rejected는 오후가 반려 + current", () => {
-    const a = stepperFor("rejected").find((n) => n.kind === "afternoon")!;
+    const a = legacyStepperFor("rejected").find((n) => n.kind === "afternoon")!;
     expect(a.state).toBe("반려");
     expect(a.current).toBe(true);
   });
 });
 
-describe("writePrimaryLabel", () => {
+describe("legacyWritePrimaryLabel (v1)", () => {
   it("모드별 버튼 라벨", () => {
-    expect(writePrimaryLabel("morningPlan", null)).toBe("계획 제출");
-    expect(writePrimaryLabel("afternoonClose", null)).toBe("최종 제출");
-    // 오후 마감에서 야간 '있음' → 제출이 아니라 야간 계획 저장(2단계)
-    expect(writePrimaryLabel("afternoonClose", "yes")).toBe("야간 계획 저장");
-    // 야간 마감 모드는 항상 최종 제출
-    expect(writePrimaryLabel("nightClose", "yes")).toBe("최종 제출");
-    expect(writePrimaryLabel("nightClose", "no")).toBe("최종 제출");
-    expect(writePrimaryLabel("rejected", null)).toBe("재제출하기");
+    expect(legacyWritePrimaryLabel("morningPlan", null)).toBe("계획 제출");
+    expect(legacyWritePrimaryLabel("afternoonClose", null)).toBe("최종 제출");
+    expect(legacyWritePrimaryLabel("afternoonClose", "yes")).toBe("야간 계획 저장");
+    expect(legacyWritePrimaryLabel("nightClose", "yes")).toBe("최종 제출");
+    expect(legacyWritePrimaryLabel("nightClose", "no")).toBe("최종 제출");
+    expect(legacyWritePrimaryLabel("rejected", null)).toBe("재제출하기");
   });
 });
 
-describe("editableSections", () => {
+describe("legacyEditableSections (v1)", () => {
   it("morningClose는 오전·오후 편집", () => {
-    expect(editableSections("morningClose", null)).toEqual(["morning", "afternoon"]);
+    expect(legacyEditableSections("morningClose", null)).toEqual(["morning", "afternoon"]);
   });
   it("nightClose 야간없음은 편집 없음", () => {
-    expect(editableSections("nightClose", "no")).toEqual([]);
+    expect(legacyEditableSections("nightClose", "no")).toEqual([]);
   });
   it("view는 읽기전용", () => {
-    expect(editableSections("view", null)).toEqual([]);
+    expect(legacyEditableSections("view", null)).toEqual([]);
   });
 });
 

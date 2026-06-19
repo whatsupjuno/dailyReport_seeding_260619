@@ -3,7 +3,7 @@ import { apiUser, badRequest, forbidden, parseId, unauthorized } from "@/lib/aut
 import { getReportOwnerId } from "@/lib/data/reports";
 import { addCommunication } from "@/lib/data/report-mutations";
 
-const TYPES = ["통화", "메일", "회의", "카톡", "구두"];
+const TYPES = ["통화", "메일", "회의", "카톡", "구두", "메신저"];
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await apiUser();

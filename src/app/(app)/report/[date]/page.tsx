@@ -5,13 +5,23 @@ import {
   getReportByUserDate,
   loadFullReport,
   recentTaskSuggestions,
-  sectionStatusMap,
+  bucketedTasks,
   type TaskRow,
 } from "@/lib/data/reports";
 import { attachmentsByReport } from "@/lib/data/attachments";
+import { commentMetaForReport } from "@/lib/data/comments";
+import { taskRejectionMap } from "@/lib/data/task-rejections";
 import { computeWriteMode } from "@/lib/domain/mode";
-import { formatKoreanDate, todayKstISO } from "@/lib/date";
-import ReportEditor, { type ReportView, type TaskAttachment } from "@/components/report/ReportEditor";
+import { isV2Report } from "@/lib/domain/config";
+import { formatKoreanDate, todayKstISO, kstHm } from "@/lib/date";
+import ReportEditor, {
+  type ReportView,
+  type ReportTask,
+  type TaskAttachment,
+} from "@/components/report/ReportEditor";
+import LegacyReportEditor, {
+  buildLegacyView,
+} from "@/components/report/LegacyReportEditor";
 
 function isValidIsoDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -36,12 +46,16 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
   const full = await loadFullReport(reportId);
   if (!full) return <div style={{ padding: 24 }}>보고서를 불러오지 못했습니다.</div>;
 
-  const secMap = sectionStatusMap(full.sections);
-  const mode = computeWriteMode(full.report.status, full.report.is_vacation, secMap);
+  // 레거시(v1) 보고서는 동결 렌더 — 섹션 순차 모델
+  if (!isV2Report(full.report)) {
+    return <LegacyReportEditor view={buildLegacyView(full, date)} />;
+  }
 
-  const [attachments, recentTasks] = await Promise.all([
+  const [attachments, recentTasks, commentMeta, rejectMap] = await Promise.all([
     attachmentsByReport(reportId),
     recentTaskSuggestions(user.id),
+    commentMetaForReport(reportId, user.id),
+    taskRejectionMap(reportId),
   ]);
   const attMap = new Map<number, TaskAttachment[]>();
   for (const a of attachments) {
@@ -50,25 +64,25 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
     attMap.set(a.task_id, arr);
   }
 
-  const sections = full.sections.map((s) => ({
-    id: s.id,
-    kind: s.kind,
-    status: s.status,
-    locked: s.locked,
-    tasks: full.tasks
-      .filter((t: TaskRow) => t.section_id === s.id)
-      .map((t) => ({
-        id: t.id,
-        project: t.project,
-        title: t.title,
-        status: t.status,
-        planned_start: t.planned_start,
-        planned_duration_min: t.planned_duration_min,
-        actual_duration_min: t.actual_duration_min,
-        hold_reason: t.hold_reason,
-        attachments: attMap.get(t.id) ?? [],
-      })),
-  }));
+  const mode = computeWriteMode(full.report.status, full.report.is_vacation);
+  const buckets = bucketedTasks(full);
+  const toTask = (t: TaskRow): ReportTask => ({
+    id: t.id,
+    project: t.project,
+    title: t.title,
+    status: t.status,
+    plannedStart: t.planned_start,
+    plannedDurationMin: t.planned_duration_min,
+    doneTime: kstHm(t.completed_at),
+    isNight: t.is_night,
+    holdReason: t.hold_reason,
+    rejectState: t.reject_state,
+    rejectComment: rejectMap.get(t.id)?.comment ?? null,
+    commentCount: commentMeta.get(t.id)?.count ?? 0,
+    commentUnread: commentMeta.get(t.id)?.unread ?? false,
+    attachments: attMap.get(t.id) ?? [],
+  });
+  const roleLabel = user.role === "admin" ? "관리자" : user.role === "group_leader" ? "그룹장" : "직원";
 
   const view: ReportView = {
     reportId,
@@ -76,14 +90,20 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
     dateLabel: formatKoreanDate(date),
     mode,
     status: full.report.status,
+    viewerRole: roleLabel,
     isVacation: full.report.is_vacation,
     vacationType: full.report.vacation_type,
+    vacationComment: full.report.vacation_comment,
     nightHas: full.report.night_has,
     nightReason: full.report.night_reason,
     dailyComment: full.report.daily_comment,
     noCommunication: full.report.no_communication,
     submittedAt: full.report.submitted_at,
-    sections,
+    planSubmittedAt: full.report.plan_submitted_at,
+    todo: buckets.todo.map(toTask),
+    am: buckets.am.map(toTask),
+    pm: buckets.pm.map(toTask),
+    night: buckets.night.map(toTask),
     comms: full.comms.map((c) => ({
       id: c.id,
       type: c.comm_type,

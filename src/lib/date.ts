@@ -20,6 +20,19 @@ export function formatKoreanDate(iso: string): string {
   return `${y}년 ${m}월 ${d}일 (${dow})`;
 }
 
+/** timestamptz(Date|string|null) → KST 'HH:MM' (없으면 null) */
+export function kstHm(d: Date | string | null): string | null {
+  if (d == null) return null;
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 /** 'YYYY-MM-DD' → '06-18' */
 export function shortDate(iso: string): string {
   const [, m, d] = iso.split("-");
