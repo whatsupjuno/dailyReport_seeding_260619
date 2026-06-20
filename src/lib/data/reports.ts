@@ -149,7 +149,7 @@ export async function recentTaskSuggestions(userId: number, limit = 8): Promise<
     `SELECT s.name, s.project, s.planned FROM (
        SELECT DISTINCT ON (lower(title)) title AS name, project, planned_duration_min AS planned, t.id AS tid
          FROM tasks t JOIN daily_reports r ON r.id=t.report_id
-        WHERE r.user_id=$1 AND length(trim(title)) > 0
+        WHERE r.user_id=$1 AND r.is_vacation = false AND length(trim(title)) > 0
         ORDER BY lower(title), t.id DESC
      ) s ORDER BY s.tid DESC LIMIT $2`,
     [userId, limit],

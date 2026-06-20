@@ -27,6 +27,7 @@ export interface ReviewTask {
   commentUnread: boolean;
   rejectComment: string | null;
   rejectedBy: string | null;
+  rejectedById: number | null;
 }
 interface ReviewSection {
   kind: string;
@@ -37,6 +38,7 @@ interface ReviewSection {
 export interface ReviewView {
   reportId: number;
   reviewerName: string;
+  reviewerId: number;
   viewerRole: string;
   ownerName: string;
   dept: string | null;
@@ -50,6 +52,7 @@ export interface ReviewView {
   pending: boolean; // 검수대기(전체 승인/반려 가능)
   reviewable: boolean; // 계획제출 ∨ 검수대기(행 반려 가능)
   openRejectCount: number;
+  heldTaskCount: number;
   model: 1 | 2;
   queueNav: { position: string | null; prevId: number | null; nextId: number | null };
   buckets?: { todo: ReviewTask[]; am: ReviewTask[]; pm: ReviewTask[]; night: ReviewTask[] };
@@ -88,6 +91,9 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         alert(data.error ?? "처리에 실패했습니다.");
+        // 다른 검수자가 이미 처리했거나 상태 변경됨(409) → 최신 상태로 동기화
+        if (res.status === 409) router.refresh();
+        else if (res.status === 401) router.push("/login");
         return false;
       }
       return true;
@@ -175,7 +181,7 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
               <div data-testid="row-reject-band" style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#B91C1C", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 7, padding: "7px 10px", marginTop: 8 }}>
                 <span style={{ fontWeight: 700 }}>↩ 반려</span>
                 <span style={{ flex: 1 }}>{t.rejectComment}{t.rejectedBy ? ` · ${t.rejectedBy}` : ""}</span>
-                {view.reviewable && t.rejectedBy === view.reviewerName && (
+                {view.reviewable && t.rejectedById === view.reviewerId && (
                   <button onClick={() => undoRowReject(t.id)} disabled={busy} data-testid={`row-reject-undo-${t.id}`} style={{ flex: "none", background: "none", border: "none", color: "#B91C1C", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>취소</button>
                 )}
               </div>
@@ -265,6 +271,11 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
                 <div style={{ background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 10, padding: "12px 14px", marginTop: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#8A6508" }}>부재 사유</div>
                   <div style={{ fontSize: 13, color: "#6B5316", lineHeight: "20px", marginTop: 8, whiteSpace: "pre-wrap" }}>{view.vacationComment}</div>
+                </div>
+              )}
+              {view.heldTaskCount > 0 && (
+                <div data-testid="held-tasks" style={{ fontSize: 12, color: "#9AA1AE", marginTop: 12 }}>
+                  ※ 이 날 작성된 업무 {view.heldTaskCount}건이 보류되어 있습니다(휴가 처리로 검수 대상에서 제외).
                 </div>
               )}
             </div>

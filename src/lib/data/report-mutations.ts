@@ -29,6 +29,16 @@ function assertRowEditable(status: ReportStatus, rejectState: string | null) {
   throw new Error("LOCKED_TASK");
 }
 
+/**
+ * work status(계획제출 등)에서 미해소 반려가 달린 업무를 직원이 모른 채(stale 화면) 마감하면
+ * 반려가 조용히 사라진다(검수 의도 소실). 작성자가 반려를 '확인했다(ackReject)'고 보낼 때만 진행.
+ * 반려(status='반려') 모드는 작성자가 반려를 보고 고치는 흐름이라 ack 불필요.
+ */
+function assertSawReject(status: ReportStatus, rejectState: string | null, ack?: boolean) {
+  if (WORK_STATUSES.includes(status) && rejectState === "반려" && !ack)
+    throw new Error("HAS_OPEN_REJECT");
+}
+
 /** 행 마감/수정 시 미해소 반려를 자동 해소(D3: 계획제출·반려 재마감 시 resolved). */
 async function resolveRowReject(c: PoolClient, taskId: number) {
   await c.query(
@@ -84,7 +94,7 @@ export async function addTask(reportId: number, input: AddTaskInput): Promise<{ 
 export async function closeTask(
   reportId: number,
   taskId: number,
-  opts?: { doneTime?: string | null; holdReason?: string | null },
+  opts?: { doneTime?: string | null; holdReason?: string | null; ackReject?: boolean },
 ): Promise<void> {
   const doneTime = opts?.doneTime?.trim() || null;
   // 시:분 범위까지 검증(24:00·19:99 등 ::time 캐스트 500 방지)
@@ -98,6 +108,7 @@ export async function closeTask(
     );
     if (!t.rows[0]) throw new Error("NOT_FOUND");
     assertRowEditable(status, t.rows[0].reject_state);
+    assertSawReject(status, t.rows[0].reject_state, opts?.ackReject);
     await c.query(
       `WITH ca AS (
          SELECT CASE WHEN $3::text IS NOT NULL
@@ -122,7 +133,7 @@ export async function closeTask(
 }
 
 /** 마감 취소: 다시 '진행중' 할 일로. completed_at/is_night 초기화. */
-export async function reopenTask(reportId: number, taskId: number): Promise<void> {
+export async function reopenTask(reportId: number, taskId: number, ackReject?: boolean): Promise<void> {
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
     const t = await c.query<{ reject_state: string | null }>(
@@ -131,6 +142,7 @@ export async function reopenTask(reportId: number, taskId: number): Promise<void
     );
     if (!t.rows[0]) throw new Error("NOT_FOUND");
     assertRowEditable(status, t.rows[0].reject_state);
+    assertSawReject(status, t.rows[0].reject_state, ackReject);
     await c.query(
       `UPDATE tasks SET status='진행중', completed_at=NULL, is_night=false, hold_reason=NULL, updated_at=now()
          WHERE id=$1 AND report_id=$2`,
@@ -144,7 +156,7 @@ export async function reopenTask(reportId: number, taskId: number): Promise<void
 export async function updateTask(
   reportId: number,
   taskId: number,
-  patch: { status?: string; holdReason?: string | null; actualMin?: number | null },
+  patch: { status?: string; holdReason?: string | null; actualMin?: number | null; ackReject?: boolean },
 ): Promise<void> {
   // 완결/지연 전이는 completed_at 정합(CHECK)이 필요 → closeTask/reopenTask 전용. 여기선 미완 상태만 허용.
   if (patch.status != null && patch.status !== "계획" && patch.status !== "진행중")
@@ -157,6 +169,7 @@ export async function updateTask(
     );
     if (!t.rows[0]) throw new Error("NOT_FOUND");
     assertRowEditable(status, t.rows[0].reject_state);
+    assertSawReject(status, t.rows[0].reject_state, patch.ackReject);
     await c.query(
       `UPDATE tasks SET status=COALESCE($3,status), hold_reason=$4,
               actual_duration_min=COALESCE($5,actual_duration_min), updated_at=now()
@@ -188,7 +201,7 @@ export interface AdvanceInput {
 export async function advanceReport(
   reportId: number,
   input: AdvanceInput,
-): Promise<{ mode: string; status: ReportStatus; submitted: boolean }> {
+): Promise<{ mode: string; status: ReportStatus; submitted: boolean; carried: number }> {
   return tx(async (c) => {
     const cur = await c.query<{
       user_id: number;
@@ -202,13 +215,14 @@ export async function advanceReport(
     if (input.expectedStatus && input.expectedStatus !== status) throw new Error("STALE_STATE");
 
     const wantVacation = !!input.vacationType;
-    // 휴가 전환 가드(B3 화이트리스트): 미작성/작성중/계획제출에서만 휴가로 마감 허용
-    if (wantVacation && !WORK_STATUSES.includes(status)) throw new Error("VACATION_NOT_ALLOWED");
+    // 휴가 전환 가드(B3): 미작성/작성중/계획제출 + 반려(반려된 휴가 보고서 사유 수정 후 재제출)에서만 허용.
+    if (wantVacation && !WORK_STATUSES.includes(status) && status !== "반려")
+      throw new Error("VACATION_NOT_ALLOWED");
 
     const isVac = cur.rows[0].is_vacation || wantVacation;
     const mode = computeWriteMode(status, isVac);
 
-    if (mode === "view") return { mode, status, submitted: false };
+    if (mode === "view") return { mode, status, submitted: false, carried: 0 };
 
     // 공통 필드 저장(편집 가능 모드)
     if (input.dailyComment !== undefined)
@@ -230,7 +244,7 @@ export async function advanceReport(
       );
     }
 
-    const submit = async (eventKind: "submitted" | "resubmitted") => {
+    const submit = async (eventKind: "submitted" | "resubmitted"): Promise<number> => {
       await c.query(
         `UPDATE daily_reports SET status='검수대기', submitted_at=now(), updated_at=now() WHERE id=$1`,
         [reportId],
@@ -240,10 +254,11 @@ export async function advanceReport(
         eventKind,
         user_id,
       ]);
-      if (input.carryover) await carryoverToNext(c, reportId, user_id);
+      return input.carryover ? await carryoverToNext(c, reportId, user_id) : 0;
     };
 
-    if (mode === "vacation") {
+    // 휴가 제출(신규/유지/반려 후 사유수정 재제출). 반려+휴가는 computeWriteMode상 rejected라 wantVacation으로 분기.
+    if (wantVacation || mode === "vacation") {
       const comment = input.vacationComment?.trim() || null;
       if (comment && comment.length > 10000) throw new Error("REASON_TOO_LONG");
       // 유효(저장 후) 값 기준으로 필수사유 검증 — DB CHECK 500 방지(저장된 빈 사유 재제출 케이스)
@@ -263,7 +278,7 @@ export async function advanceReport(
         [reportId, input.vacationType ?? null, comment],
       );
       await submit("submitted");
-      return { mode, status: "검수대기", submitted: true };
+      return { mode, status: "검수대기", submitted: true, carried: 0 };
     }
 
     if (mode === "rejected") {
@@ -274,14 +289,16 @@ export async function advanceReport(
         [reportId],
       );
       await c.query(`UPDATE tasks SET reject_state=NULL WHERE report_id=$1`, [reportId]);
-      await submit("resubmitted");
-      return { mode, status: "검수대기", submitted: true };
+      // 휴가가 아닌 업무로 재제출 → 휴가 플래그 해제(반려된 휴가 보고서를 업무로 전환 가능, sticky 방지)
+      await c.query(`UPDATE daily_reports SET is_vacation=false WHERE id=$1`, [reportId]);
+      const carried = await submit("resubmitted");
+      return { mode, status: "검수대기", submitted: true, carried };
     }
 
     // mode === 'work'
     if (status === "계획제출") {
-      await submit("submitted"); // 최종 제출
-      return { mode, status: "검수대기", submitted: true };
+      const carried = await submit("submitted"); // 최종 제출
+      return { mode, status: "검수대기", submitted: true, carried };
     }
     // 1차: 계획 제출 — 빈 계획(업무 0건) 제출 차단(검수 큐 노이즈 방지)
     const cnt = await c.query<{ n: string }>(`SELECT count(*) AS n FROM tasks WHERE report_id=$1`, [reportId]);
@@ -291,38 +308,39 @@ export async function advanceReport(
               is_vacation=false, updated_at=now() WHERE id=$1`,
       [reportId],
     );
-    return { mode, status: "계획제출", submitted: false };
+    return { mode, status: "계획제출", submitted: false, carried: 0 };
   });
 }
 
-/** 제출 시 미완료(완결/지연 아님) 업무를 다음 영업일 보고서로 이월(없으면 생성). 단일목록. */
-async function carryoverToNext(c: PoolClient, reportId: number, userId: number) {
+/** 제출 시 미완료 업무를 차기 보고서로 이월. 실제 이월 건수 반환(차기 보고서 부재/제출됨이면 0). */
+async function carryoverToNext(c: PoolClient, reportId: number, userId: number): Promise<number> {
   const rep = await c.query<{ report_date: string }>(
     `SELECT to_char(report_date,'YYYY-MM-DD') AS report_date FROM daily_reports WHERE id=$1`,
     [reportId],
   );
   const date = rep.rows[0]?.report_date;
-  if (!date) return;
+  if (!date) return 0;
   const incomplete = await c.query<{ project: string | null; title: string; id: number }>(
     `SELECT id, project, title FROM tasks
        WHERE report_id=$1 AND status NOT IN ('완결','지연') ORDER BY sort_order, id`,
     [reportId],
   );
-  if (incomplete.rows.length === 0) return;
+  if (incomplete.rows.length === 0) return 0;
   // 차기 보고서가 이미 있고 '작성 가능 status'일 때만 이월(제출/승인된 미래 보고서 오염 방지). 행 잠금.
   const next = await c.query<{ id: number; status: ReportStatus }>(
     `SELECT id, status FROM daily_reports WHERE user_id=$1 AND report_date > $2
        ORDER BY report_date ASC LIMIT 1 FOR UPDATE`,
     [userId, date],
   );
-  if (!next.rows[0]) return; // 차기 보고서 없으면 스킵(작성 시 '어제 미완료 불러오기'로 회수)
-  if (!WORK_STATUSES.includes(next.rows[0].status)) return; // 제출/승인/반려된 차기 보고서엔 주입 금지
+  if (!next.rows[0]) return 0; // 차기 보고서 없으면 스킵(작성 시 '어제 미완료 불러오기'로 회수)
+  if (!WORK_STATUSES.includes(next.rows[0].status)) return 0; // 제출/승인/반려된 차기 보고서엔 주입 금지
   const nextId = next.rows[0].id;
   let base = (
     await c.query<{ n: number }>(`SELECT COALESCE(MAX(sort_order)+1,0) AS n FROM tasks WHERE report_id=$1`, [
       nextId,
     ])
   ).rows[0].n;
+  let carried = 0;
   for (const t of incomplete.rows) {
     // 멱등: 같은 원본(carried_from)이 이미 이월돼 있으면 스킵(제목 충돌 대신 출처 기준)
     const dup = await c.query(`SELECT 1 FROM tasks WHERE report_id=$1 AND carried_from_task_id=$2`, [nextId, t.id]);
@@ -332,7 +350,9 @@ async function carryoverToNext(c: PoolClient, reportId: number, userId: number) 
        VALUES ($1,NULL,$2,$3,'계획',$4,$5)`,
       [nextId, t.project, t.title, base++, t.id],
     );
+    carried++;
   }
+  return carried;
 }
 
 /** 직전 보고서의 미완료 업무를 오늘 할 일로 이월(단일목록) */
@@ -348,7 +368,7 @@ export async function carryoverIncomplete(reportId: number): Promise<{ count: nu
     if (!WORK_STATUSES.includes(r.status)) throw new Error("LOCKED");
 
     const prior = await c.query<{ id: number }>(
-      `SELECT id FROM daily_reports WHERE user_id=$1 AND report_date < $2
+      `SELECT id FROM daily_reports WHERE user_id=$1 AND report_date < $2 AND is_vacation = false
         ORDER BY report_date DESC LIMIT 1`,
       [r.user_id, r.report_date],
     );

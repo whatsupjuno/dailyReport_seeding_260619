@@ -70,12 +70,14 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
       commentUnread: commentMeta.get(t.id)?.unread ?? false,
       rejectComment: rej?.comment ?? null,
       rejectedBy: rej?.rejected_by_name ?? null,
+      rejectedById: rej?.rejected_by ?? null,
     };
   };
 
   const base = {
     reportId,
     reviewerName: user.name,
+    reviewerId: user.id,
     viewerRole: roleLabel,
     ownerName: owner.name,
     dept: owner.group_name,
@@ -89,6 +91,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
     pending: full.report.status === "검수대기",
     reviewable: full.report.status === "검수대기" || full.report.status === "계획제출",
     openRejectCount,
+    heldTaskCount: full.tasks.length, // 휴가 보고서에 남아있는 업무 행 수(검수 카드 표시)
     queueNav,
     comms: full.comms.map((c) => ({ type: c.comm_type, counterpart: c.counterpart, time: c.occurred_at, summary: c.summary })),
     events: full.events.map((e) => ({ kind: e.kind, actorName: e.actor_name ?? null, comment: e.comment, rejectTarget: e.reject_target, at: e.created_at })),

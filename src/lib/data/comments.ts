@@ -46,10 +46,11 @@ export async function commentAccess(
 }
 
 export async function listComments(taskId: number): Promise<CommentRow[]> {
+  // LEFT JOIN: 작성자가 삭제(SET NULL)돼도 댓글 본문 보존, 이름은 폴백 표기.
   return query<CommentRow>(
     `SELECT tc.id, tc.task_id, tc.report_id, tc.author_user_id, tc.author_role,
-            u.name AS author_name, tc.body, tc.created_at
-       FROM task_comments tc JOIN users u ON u.id = tc.author_user_id
+            COALESCE(u.name, '(삭제된 사용자)') AS author_name, tc.body, tc.created_at
+       FROM task_comments tc LEFT JOIN users u ON u.id = tc.author_user_id
       WHERE tc.task_id = $1 ORDER BY tc.created_at, tc.id`,
     [taskId],
   );

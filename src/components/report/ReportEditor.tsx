@@ -107,6 +107,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const submitted = mode === "view";
   const doneCount =
     view.am.length + view.pm.length + view.night.filter((t) => t.status === "완결" || t.status === "지연").length;
+  // 미수정 행 반려 수(반려 모드 재제출 경고용)
+  const openRejects = [...view.todo, ...view.am, ...view.pm, ...view.night].filter((t) => t.rejectState === "반려").length;
   const stepper = stepper2({ submitted, todoCount: view.todo.length, doneCount });
   const primaryLabel = vacationMode
     ? vacType === "휴직"
@@ -141,6 +143,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         alert(data.error ?? "처리에 실패했습니다.");
+        // 상태 변경됨(409) 또는 인증 만료(401)면 화면을 최신으로 동기화 — stale 반복클릭 방지
+        if (res.status === 409) router.refresh();
+        else if (res.status === 401) router.push("/login");
         return null;
       }
       return data;
@@ -187,16 +192,17 @@ export default function ReportEditor({ view }: { view: ReportView }) {
     }
   }
 
-  async function markDone(taskId: number) {
-    const ok = await call(`/api/tasks/${taskId}/close`, {});
+  // ackReject: 현재 화면에 반려 밴드가 보이는(=직원이 반려를 본) 경우만 true. stale 화면이면 false→서버가 409로 새로고침 유도.
+  async function markDone(taskId: number, ackReject: boolean) {
+    const ok = await call(`/api/tasks/${taskId}/close`, { ackReject });
     if (ok) {
       flash("완료 시각으로 자동 분류했어요");
       router.refresh();
     }
   }
 
-  async function reopen(taskId: number) {
-    const ok = await call(`/api/tasks/${taskId}/reopen`, {});
+  async function reopen(taskId: number, ackReject: boolean) {
+    const ok = await call(`/api/tasks/${taskId}/reopen`, { ackReject });
     if (ok) {
       flash("다시 할 일로 이동했어요");
       router.refresh();
@@ -303,16 +309,25 @@ export default function ReportEditor({ view }: { view: ReportView }) {
       alert("야간 업무 사유를 입력해 주세요.");
       return;
     }
+    // 반려 재제출인데 안 고친 반려가 남아있으면 확인
+    if (mode === "rejected" && openRejects > 0 && !window.confirm(`아직 수정하지 않은 반려 업무가 ${openRejects}건 있습니다. 그대로 다시 제출할까요?`))
+      return;
     // 반려 재제출은 이월 무의미 → carryover 생략. 계획제출→최종 제출만 이월 적용.
+    const wantCarry = mode !== "rejected" && carryOver;
     const ok = await call(`/api/reports/${view.reportId}/advance`, {
       nightBranch: nightOn ? "yes" : "no",
       nightReason: nightReason || null,
       dailyComment,
-      carryover: mode === "rejected" ? false : carryOver,
+      carryover: wantCarry,
       expectedStatus: view.status,
     });
     setSubmitOpen(false);
-    if (ok) router.refresh();
+    if (ok) {
+      // 이월 결과를 정직하게 안내(차기 보고서 없으면 0 → 다음 작성 시 회수)
+      if (wantCarry)
+        flash(ok.carried > 0 ? `미완료 ${ok.carried}건을 다음 보고서로 이월했어요` : "다음 보고서가 아직 없어요 — 다음 작성 시 ‘어제 미완료 불러오기’로 가져올 수 있어요", 3200);
+      router.refresh();
+    }
   }
 
   const incompleteN = view.todo.length;
@@ -336,7 +351,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           if (mode === "rejected")
             banner = { icon: "↩", title: "그룹장이 보고서를 반려했습니다.", sub: rejectComment ? `그룹장 코멘트: ${rejectComment}` : "반려된 업무만 수정·재마감한 뒤 다시 제출해 주세요.", bg: "#FCEBEB", line: "#F5C2C2", fg: "#B91C1C" };
           else if (mode === "view")
-            banner = { icon: "⧗", title: "제출 완료 · 검수 대기 중입니다.", sub: "관리자 검수가 끝나면 결과를 알려드립니다. 현재는 읽기 전용입니다.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
+            banner = { icon: "⧗", title: "제출 완료 · 검수 대기 중입니다.", sub: "현재는 읽기 전용입니다. 수정이 필요하면 검수자에게 반려를 요청해 주세요.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
           else if (view.status === "계획제출")
             banner = { icon: "▸", title: "계획을 제출했어요.", sub: "검수자가 개별 업무를 확인할 수 있습니다. 하루를 마무리한 뒤 최종 제출해 주세요.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
           if (!banner) return null;
@@ -380,7 +395,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: 22, marginBottom: 16, boxShadow: "0 1px 3px rgba(16,24,40,.08)" }} data-testid="vacation-card">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>오늘은 휴가로 처리할까요?</div>
-              {!readOnly && !view.isVacation && (
+              {!readOnly && (
                 <button onClick={() => setVacationMode(false)} data-testid="exit-vacation" style={btnGhost}>← 업무 작성으로</button>
               )}
             </div>
@@ -421,7 +436,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 {/* 미완료 리스트 */}
                 <div style={{ marginTop: 8 }}>
                   {view.todo.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} onMarkDone={() => markDone(t.id)} onComment={() => openDrawer(t, "오늘 할 일")} />
+                    <TaskRow key={t.id} t={t} busy={busy} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} />
                   ))}
                   {view.todo.length === 0 && (
                     <div style={{ textAlign: "center", padding: "22px 0" }}>
@@ -514,7 +529,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 </div>
                 <div style={{ padding: "6px 18px 14px" }}>
                   {view.todo.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} rejectedMode={mode === "rejected"} onMarkDone={() => markDone(t.id)} onComment={() => openDrawer(t, "오늘 할 일")} />
+                    <TaskRow key={t.id} t={t} busy={busy} rejectedMode={mode === "rejected"} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} />
                   ))}
                 </div>
               </div>
@@ -606,7 +621,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                   </div>
                   <button onClick={() => setCarryOver((v) => !v)} data-testid="carry-toggle" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: carryOver ? "#EEF2FF" : "#fff", border: `1px solid ${carryOver ? "#3B5BDB" : "#E2E5EB"}`, borderRadius: 10, padding: "11px 14px", marginTop: 8, cursor: "pointer", fontFamily: "inherit" }}>
                     <span style={{ width: 20, height: 20, borderRadius: 6, flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", background: carryOver ? "#3B5BDB" : "#fff", border: `1.5px solid ${carryOver ? "#3B5BDB" : "#CBD0D9"}`, color: "#fff", fontSize: 12, fontWeight: 700 }}>{carryOver ? "✓" : ""}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "#3A4150" }}>미완료 {incompleteN}건을 <span style={{ color: "#3B5BDB" }}>내일 할 일로 이월</span></span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#3A4150" }}>미완료 {incompleteN}건을 <span style={{ color: "#3B5BDB" }}>다음 보고서로 이월</span> <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(없으면 다음 작성 시 반영)</span></span>
                   </button>
                 </>
               )}
@@ -682,7 +697,7 @@ function TaskRow({ t, busy, rejectedMode = false, onMarkDone, onComment }: { t: 
   );
 }
 
-function ResultBucket({ testid, zone, icon, name, range, tasks, editable, rejectedMode = false, busy, onReopen, onComment, emptyText }: { testid: string; zone: string; icon: string; name: string; range: string; tasks: ReportTask[]; editable: boolean; rejectedMode?: boolean; busy: boolean; onReopen: (id: number) => void; onComment: (t: ReportTask, zone: string) => void; emptyText: string }) {
+function ResultBucket({ testid, zone, icon, name, range, tasks, editable, rejectedMode = false, busy, onReopen, onComment, emptyText }: { testid: string; zone: string; icon: string; name: string; range: string; tasks: ReportTask[]; editable: boolean; rejectedMode?: boolean; busy: boolean; onReopen: (id: number, ackReject: boolean) => void; onComment: (t: ReportTask, zone: string) => void; emptyText: string }) {
   return (
     <div data-testid={testid} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, boxShadow: "0 1px 3px rgba(16,24,40,.08)", marginBottom: 16, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#FAFBFC", flexWrap: "wrap" }}>
@@ -714,7 +729,7 @@ function ResultBucket({ testid, zone, icon, name, range, tasks, editable, reject
                   {rejected && <RejectBand comment={t.rejectComment} />}
                 </div>
                 {canReopen && (
-                  <button data-id={t.id} onClick={() => onReopen(t.id)} disabled={busy} data-testid={`reopen-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #CBD0D9", color: "#6B7280", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>마감 취소</button>
+                  <button data-id={t.id} onClick={() => onReopen(t.id, rejected)} disabled={busy} data-testid={`reopen-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #CBD0D9", color: "#6B7280", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>마감 취소</button>
                 )}
                 <CommentButton count={t.commentCount} unread={t.commentUnread} onClick={() => onComment(t, zone)} />
               </div>

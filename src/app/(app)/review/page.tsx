@@ -35,7 +35,14 @@ export default async function ReviewQueuePage() {
             <div style={{ fontSize: 13, color: "#6B7280" }} className="tnum">
               {shortDate(it.report_date)} ({weekday(it.report_date)})
             </div>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#B7860B", background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 6, padding: "3px 9px" }}>검수대기</span>
+            {user.role === "admin" && it.no_active_leader && (
+              <span data-testid="no-reviewer" style={{ fontSize: 12, fontWeight: 600, color: "#B91C1C", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 6, padding: "3px 9px" }}>검수자 없음</span>
+            )}
+            {it.status === "계획제출" ? (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#2563EB", background: "#E6EEFD", border: "1px solid #BBD0F7", borderRadius: 6, padding: "3px 9px" }}>계획제출</span>
+            ) : (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#B7860B", background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 6, padding: "3px 9px" }}>검수대기</span>
+            )}
           </Link>
         ))}
       </div>

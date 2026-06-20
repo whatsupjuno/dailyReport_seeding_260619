@@ -71,6 +71,7 @@ export async function getOpenTaskRejectCount(reportId: number): Promise<number> 
 export interface TaskRejection {
   task_id: number;
   comment: string;
+  rejected_by: number | null;
   rejected_by_name: string | null;
   rejected_at: string;
 }
@@ -78,7 +79,7 @@ export interface TaskRejection {
 /** 보고서의 미해소 행 반려 맵(렌더용) */
 export async function taskRejectionMap(reportId: number): Promise<Map<number, TaskRejection>> {
   const rows = await query<TaskRejection>(
-    `SELECT tr.task_id, tr.comment, u.name AS rejected_by_name, tr.rejected_at
+    `SELECT tr.task_id, tr.comment, tr.rejected_by, u.name AS rejected_by_name, tr.rejected_at
        FROM task_rejections tr LEFT JOIN users u ON u.id = tr.rejected_by
       WHERE tr.report_id=$1 AND tr.resolved_at IS NULL`,
     [reportId],

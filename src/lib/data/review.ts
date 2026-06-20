@@ -107,6 +107,7 @@ export interface ReviewListItem {
   dept: string | null;
   report_date: string;
   status?: string;
+  no_active_leader?: boolean; // owner 그룹에 활성 그룹장 부재(admin 폴백만 가능) — 큐 강조용
 }
 
 export async function reviewQueueForReviewer(reviewer: UserRow): Promise<ReviewListItem[]> {
@@ -114,8 +115,9 @@ export async function reviewQueueForReviewer(reviewer: UserRow): Promise<ReviewL
     // admin도 본인 보고서는 셀프검수 불가 → 제외
     return query<ReviewListItem>(
       `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
-              r.status
+              r.status, (g.leader_user_id IS NULL OR lu.active IS NOT TRUE) AS no_active_leader
          FROM daily_reports r JOIN users u ON u.id=r.user_id LEFT JOIN groups g ON g.id=u.group_id
+         LEFT JOIN users lu ON lu.id = g.leader_user_id
         WHERE r.status IN ('검수대기','계획제출') AND r.user_id <> $1
         ORDER BY COALESCE(r.submitted_at, r.plan_submitted_at) NULLS LAST, r.id`,
       [reviewer.id],
