@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requireReviewer } from "@/lib/auth/guard";
+import { parseId } from "@/lib/auth/api";
 import { authorizeReview, canViewReview, getReviewOwner, reviewQueueForReviewer } from "@/lib/data/review";
 import { loadFullReport, bucketedTasks, type TaskRow } from "@/lib/data/reports";
 import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachments";
@@ -17,8 +18,9 @@ const KIND_NAME: Record<string, string> = { plan: "오늘 계획", morning: "오
 
 export default async function ReviewDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const reportId = Number(id);
   const user = await requireReviewer();
+  const reportId = parseId(id);
+  if (reportId == null) notFound(); // 양의 정수만 허용(API 라우트와 동일 규칙) — 비정상 입력 시 404
 
   const owner = await getReviewOwner(reportId);
   if (!owner) notFound();

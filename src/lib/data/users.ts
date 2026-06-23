@@ -44,8 +44,9 @@ export interface AdminUserRow extends UserRow {
 }
 
 export async function listUsers(): Promise<AdminUserRow[]> {
+  // SAFE_COLS만 조회 — 민감 컬럼(login_code)을 데이터 계층에서 아예 읽지 않음(우발 노출 방지)
   return query<AdminUserRow>(
-    `SELECT u.*, g.name AS group_name
+    `SELECT ${SAFE_COLS}
        FROM users u LEFT JOIN groups g ON g.id = u.group_id
       ORDER BY u.id`,
   );

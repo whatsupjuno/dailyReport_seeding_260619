@@ -15,6 +15,14 @@ test("잘못된 ID(비정규/지수)는 400 — DB 범위초과 500 방지", asy
   }
 });
 
+test("검수 상세 페이지: 비정상 ID는 404 — DB 에러(500) 방지", async ({ page }) => {
+  await login(page, "park.sora"); // admin → requireReviewer 통과
+  for (const bad of ["abc", "1.5", "0x10"]) {
+    const resp = await page.goto(`/review/${bad}`);
+    expect(resp?.status()).toBe(404);
+  }
+});
+
 test("휴가 우회: 검수대기 보고서를 vacationType만으로 휴가 전환 → 409", async ({ page }) => {
   await login(page, "park.seojun"); // 검수대기(시드)
   const reportId = await page.locator("[data-report-id]").getAttribute("data-report-id");
