@@ -1,5 +1,5 @@
 import { query, queryOne, tx } from "../db";
-import { canReview, getReviewOwner } from "./review";
+import { authorizeReview, getReviewOwner } from "./review";
 import type { UserRow } from "./users";
 
 export interface CommentRow {
@@ -32,7 +32,13 @@ export async function getTaskContext(taskId: number): Promise<TaskContext | null
   );
 }
 
-/** 댓글 접근(열람/작성) 권한: 보고서 작성자 본인 또는 검수 권한자(그룹장/관리자). */
+/**
+ * 댓글 접근 권한. canWrite=true면 작성 가능, false면 열람 전용(브리프 §3: 관리자는 열람만).
+ * - 작성자 본인: 열람+작성
+ * - 검수 액션권자(그룹장 실체/셀프폴백): 열람+작성
+ * - 관리자(role=admin): 열람만(canWrite=false)
+ * - 그 외: null(접근 불가)
+ */
 export async function commentAccess(
   taskId: number,
   viewer: UserRow,
@@ -41,7 +47,8 @@ export async function commentAccess(
   if (!ctx) return null;
   if (ctx.owner_user_id === viewer.id) return { ctx, canWrite: true };
   const owner = await getReviewOwner(ctx.report_id);
-  if (owner && canReview(viewer, owner)) return { ctx, canWrite: true };
+  if (owner && (await authorizeReview(viewer, owner))) return { ctx, canWrite: true };
+  if (viewer.role === "admin") return { ctx, canWrite: false }; // 관리자 열람 전용
   return null; // 권한 없으면 접근 자체 불가
 }
 

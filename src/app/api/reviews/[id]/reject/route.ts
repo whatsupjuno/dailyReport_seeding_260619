@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
-import { canReview, getReviewOwner, rejectReport } from "@/lib/data/review";
+import { authorizeReview, getReviewOwner, rejectReport } from "@/lib/data/review";
 import { getOpenTaskRejectCount } from "@/lib/data/task-rejections";
 
 const TARGETS = ["전체", "오전", "오후", "야간"];
@@ -13,7 +14,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (reportId == null) return badRequest("잘못된 보고서 ID입니다.");
   const owner = await getReviewOwner(reportId);
   if (!owner) return badRequest("보고서를 찾을 수 없습니다.");
-  if (!canReview(user, owner)) return forbidden();
+  if (!(await authorizeReview(user, owner))) return forbidden();
 
   const body = (await req.json().catch(() => ({}))) as { comment?: string; target?: string };
   const comment = (body.comment ?? "").trim();
@@ -26,6 +27,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     await rejectReport(reportId, user.id, comment, target);
+    revalidatePath("/report/[date]", "page");
+    revalidatePath("/reports");
+    revalidatePath("/review");
     return NextResponse.json({ ok: true });
   } catch (e) {
     const m = (e as Error).message;

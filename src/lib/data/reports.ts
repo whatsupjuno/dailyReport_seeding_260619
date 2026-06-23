@@ -19,6 +19,7 @@ export interface ReportRow {
   submitted_at: string | null;
   model_version: number; // 1=레거시 섹션, 2=단일목록(v2)
   plan_submitted_at: string | null; // C2 1차(계획) 제출 표식
+  updated_at: string; // 마지막 저장 시각(헤더 '저장됨' 표시용)
 }
 
 export interface SectionRow {
@@ -45,6 +46,7 @@ export interface TaskRow {
   is_night: boolean; // #4 야간 플래그
   reject_state: string | null; // #3 NULL=정상, '반려'=행 반려
   rejected_at: string | null;
+  description: string | null; // 업무 설명(상세)
 }
 
 export interface CommRow {
@@ -169,6 +171,15 @@ export async function getTaskOwner(
   return queryOne<{ report_id: number; user_id: number }>(
     `SELECT t.report_id, r.user_id FROM tasks t JOIN daily_reports r ON r.id=t.report_id WHERE t.id=$1`,
     [taskId],
+  );
+}
+
+export async function getCommOwner(
+  commId: number,
+): Promise<{ report_id: number; user_id: number } | null> {
+  return queryOne<{ report_id: number; user_id: number }>(
+    `SELECT cm.report_id, r.user_id FROM communications cm JOIN daily_reports r ON r.id=cm.report_id WHERE cm.id=$1`,
+    [commId],
   );
 }
 

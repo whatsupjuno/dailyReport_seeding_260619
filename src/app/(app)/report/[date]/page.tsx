@@ -8,9 +8,10 @@ import {
   bucketedTasks,
   type TaskRow,
 } from "@/lib/data/reports";
-import { attachmentsByReport } from "@/lib/data/attachments";
+import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachments";
 import { commentMetaForReport } from "@/lib/data/comments";
 import { taskRejectionMap } from "@/lib/data/task-rejections";
+import { listCarryoverCandidates } from "@/lib/data/report-mutations";
 import { computeWriteMode } from "@/lib/domain/mode";
 import { isV2Report } from "@/lib/domain/config";
 import { formatKoreanDate, todayKstISO, kstHm } from "@/lib/date";
@@ -51,12 +52,20 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
     return <LegacyReportEditor view={buildLegacyView(full, date)} />;
   }
 
-  const [attachments, recentTasks, commentMeta, rejectMap] = await Promise.all([
+  const [attachments, recentTasks, commentMeta, rejectMap, commAtt, carryoverCandidates] = await Promise.all([
     attachmentsByReport(reportId),
     recentTaskSuggestions(user.id),
     commentMetaForReport(reportId, user.id),
     taskRejectionMap(reportId),
+    commAttachmentsByReport(reportId),
+    listCarryoverCandidates(reportId),
   ]);
+  const commAttMap = new Map<number, Array<{ id: number; fileName: string | null; url: string | null; comment: string | null }>>();
+  for (const a of commAtt) {
+    const arr = commAttMap.get(a.communication_id) ?? [];
+    arr.push({ id: a.id, fileName: a.file_name, url: a.url, comment: a.comment });
+    commAttMap.set(a.communication_id, arr);
+  }
   const attMap = new Map<number, TaskAttachment[]>();
   for (const a of attachments) {
     const arr = attMap.get(a.task_id) ?? [];
@@ -74,8 +83,10 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
     plannedStart: t.planned_start,
     plannedDurationMin: t.planned_duration_min,
     doneTime: kstHm(t.completed_at),
+    actualDurationMin: t.actual_duration_min,
     isNight: t.is_night,
     holdReason: t.hold_reason,
+    description: t.description,
     rejectState: t.reject_state,
     rejectComment: rejectMap.get(t.id)?.comment ?? null,
     commentCount: commentMeta.get(t.id)?.count ?? 0,
@@ -100,6 +111,7 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
     noCommunication: full.report.no_communication,
     submittedAt: full.report.submitted_at,
     planSubmittedAt: full.report.plan_submitted_at,
+    updatedAt: full.report.updated_at,
     todo: buckets.todo.map(toTask),
     am: buckets.am.map(toTask),
     pm: buckets.pm.map(toTask),
@@ -110,6 +122,7 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
       counterpart: c.counterpart,
       time: c.occurred_at,
       summary: c.summary,
+      attachments: commAttMap.get(c.id) ?? [],
     })),
     events: full.events.map((e) => ({
       kind: e.kind,
@@ -119,6 +132,7 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
       at: e.created_at,
     })),
     recentTasks,
+    carryoverCandidates,
   };
 
   return <ReportEditor view={view} />;

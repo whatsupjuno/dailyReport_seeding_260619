@@ -23,12 +23,55 @@ export async function getReviewOwner(reportId: number): Promise<ReviewOwner | nu
   );
 }
 
-/** 검수 권한: 셀프검수 금지, admin 전체, group_leader는 자기 그룹(=그룹장인 그룹) 보고서만 */
+/**
+ * 검수 "액션" 권한(승인/반려/행반려): 셀프검수 금지 + owner 그룹의 그룹장 실체(leader_user_id)만.
+ * 브리프 §3: 관리자(role=admin) 자체로는 검수 액션 불가(열람 전용). 단 admin이 어떤 그룹의 그룹장이면
+ * 그 '그룹장 실체'로서 액션 가능(방준호=admin+Sales 그룹장 케이스 유지). 역할 라벨이 아닌 실체로 판정.
+ */
 export function canReview(reviewer: UserRow, owner: ReviewOwner): boolean {
-  if (owner.user_id === reviewer.id) return false; // 본인 보고서 셀프 검수 금지(직무분리)
+  if (owner.user_id === reviewer.id) return false; // 본인 보고서 셀프 검수 금지(폴백은 authorizeReview)
+  return owner.leader_user_id === reviewer.id;
+}
+
+/**
+ * 이 보고서를 검수할 수 있는 "본인 외" 활성 사용자가 존재하는가.
+ * - 다른 활성 admin, 또는 owner 그룹의 활성 그룹장(본인 아님)이 있으면 true.
+ * - 최상위 사용자(예: 유일한 admin)는 false → 본인 셀프 승인 폴백 허용 근거.
+ */
+export async function ownerHasOtherReviewer(owner: ReviewOwner): Promise<boolean> {
+  // 관리자는 검수 액션 불가(열람전용)이므로 '다른 검수자'에 포함하지 않는다. owner 그룹의 활성 그룹장(본인 아님)만.
+  if (!owner.leader_user_id || owner.leader_user_id === owner.user_id) return false;
+  const r = await queryOne<{ active: boolean }>(`SELECT active FROM users WHERE id = $1`, [owner.leader_user_id]);
+  return r?.active === true;
+}
+
+/** 사용자 본인 보고서를 검수할 수 있는 "본인 외" 활성 그룹장이 있는가(목록에서 본인 행 액션 결정용). admin은 비포함(열람전용). */
+export async function userHasOtherReviewer(u: { id: number; group_id: number | null }): Promise<boolean> {
+  if (u.group_id == null) return false;
+  const r = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM groups g JOIN users lu ON lu.id = g.leader_user_id
+      WHERE g.id = $1 AND lu.active AND lu.id <> $2`,
+    [u.group_id, u.id],
+  );
+  return (r?.n ?? 0) > 0;
+}
+
+/**
+ * 검수 인가(셀프 폴백 포함). 본인 보고서는 "위/동급 검수자가 아무도 없을 때만" 셀프 승인 허용(직무분리 완화는 최상위 한정).
+ * 페이지 가드와 승인/반려 API가 공통으로 사용 — 인가 로직 단일화.
+ */
+export async function authorizeReview(reviewer: UserRow, owner: ReviewOwner): Promise<boolean> {
+  if (owner.user_id === reviewer.id) return !(await ownerHasOtherReviewer(owner));
+  return canReview(reviewer, owner);
+}
+
+/**
+ * 검수 화면 "열람" 권한. 관리자(role=admin)는 전체 보고서를 열람 전용으로 볼 수 있다(브리프 §3).
+ * 액션(승인/반려/행반려/댓글작성) 가능 여부는 authorizeReview(=canAct)로 별도 판정한다.
+ */
+export async function canViewReview(reviewer: UserRow, owner: ReviewOwner): Promise<boolean> {
   if (reviewer.role === "admin") return true;
-  if (reviewer.role === "group_leader") return owner.leader_user_id === reviewer.id;
-  return false;
+  return authorizeReview(reviewer, owner);
 }
 
 function targetKinds(target: string): SectionKind[] {
@@ -111,24 +154,18 @@ export interface ReviewListItem {
 }
 
 export async function reviewQueueForReviewer(reviewer: UserRow): Promise<ReviewListItem[]> {
-  if (reviewer.role === "admin") {
-    // admin도 본인 보고서는 셀프검수 불가 → 제외
-    return query<ReviewListItem>(
-      `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
-              r.status, (g.leader_user_id IS NULL OR lu.active IS NOT TRUE) AS no_active_leader
-         FROM daily_reports r JOIN users u ON u.id=r.user_id LEFT JOIN groups g ON g.id=u.group_id
-         LEFT JOIN users lu ON lu.id = g.leader_user_id
-        WHERE r.status IN ('검수대기','계획제출') AND r.user_id <> $1
-        ORDER BY COALESCE(r.submitted_at, r.plan_submitted_at) NULLS LAST, r.id`,
-      [reviewer.id],
-    );
-  }
-  // group_leader: 자기 그룹, 본인 제외. C2: 계획제출도 행 단위 검토 가능 → 큐 노출
+  // 액션 가능한 큐(role 무관, 그룹장 실체 기준):
+  //  (1) 내가 그룹장인 그룹의 팀원 보고서, +
+  //  (2) 내 보고서 중 위에 활성 그룹장이 없는 경우(최상위 셀프 승인 폴백).
+  // 관리자(어느 그룹의 그룹장도 아님)는 두 조건 모두 비어 빈 큐 → 열람은 '팀 보고 현황'(/reports)에서.
   return query<ReviewListItem>(
     `SELECT r.id AS report_id, u.name, g.name AS dept, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
-            r.status
-       FROM daily_reports r JOIN users u ON u.id=r.user_id JOIN groups g ON g.id=u.group_id
-      WHERE r.status IN ('검수대기','계획제출') AND g.leader_user_id=$1 AND u.id <> $1
+            r.status, (g.leader_user_id IS NULL OR lu.active IS NOT TRUE) AS no_active_leader
+       FROM daily_reports r JOIN users u ON u.id=r.user_id LEFT JOIN groups g ON g.id=u.group_id
+       LEFT JOIN users lu ON lu.id = g.leader_user_id
+      WHERE r.status IN ('검수대기','계획제출')
+        AND ( (g.leader_user_id = $1 AND u.id <> $1)
+              OR (u.id = $1 AND (g.leader_user_id IS NULL OR g.leader_user_id = $1 OR lu.active IS NOT TRUE)) )
       ORDER BY COALESCE(r.submitted_at, r.plan_submitted_at) NULLS LAST, r.id`,
     [reviewer.id],
   );

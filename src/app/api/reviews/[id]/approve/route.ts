@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
-import { approveReport, canReview, getReviewOwner } from "@/lib/data/review";
+import { approveReport, authorizeReview, getReviewOwner } from "@/lib/data/review";
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await apiUser();
@@ -10,9 +11,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (reportId == null) return badRequest("잘못된 보고서 ID입니다.");
   const owner = await getReviewOwner(reportId);
   if (!owner) return badRequest("보고서를 찾을 수 없습니다.");
-  if (!canReview(user, owner)) return forbidden();
+  if (!(await authorizeReview(user, owner))) return forbidden();
   try {
     await approveReport(reportId, user.id);
+    // 승인 후 작성자의 보고서 화면/목록 캐시 무효화(검수 결과가 즉시 반영되도록)
+    revalidatePath("/report/[date]", "page");
+    revalidatePath("/reports");
+    revalidatePath("/review");
     return NextResponse.json({ ok: true });
   } catch (e) {
     const m = (e as Error).message;

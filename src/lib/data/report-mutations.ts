@@ -20,12 +20,13 @@ async function loadStatus(c: PoolClient, reportId: number): Promise<ReportStatus
 /**
  * 업무 행이 (지금) 작성자 편집 가능한지.
  *  - work status(미작성/작성중/계획제출): 자유 편집
- *  - 반려: 미해소 반려 행(reject_state='반려')만 편집(나머지 LOCKED_TASK)
+ *  - 반려: 보고서 전체를 작성자가 자유롭게 수정 후 재제출(반려 행 외에도 편집 허용).
+ *    검수자가 전역 코멘트로만 반려(행 단위 반려 0건)해도 작성자가 고칠 수 있어야 함.
  *  - 그 외(검수대기/승인/제출완료/재제출): 잠금
  */
-function assertRowEditable(status: ReportStatus, rejectState: string | null) {
+function assertRowEditable(status: ReportStatus, _rejectState: string | null) {
   if (WORK_STATUSES.includes(status)) return;
-  if (status === "반려" && rejectState === "반려") return;
+  if (status === "반려") return;
   throw new Error("LOCKED_TASK");
 }
 
@@ -51,6 +52,7 @@ async function resolveRowReject(c: PoolClient, taskId: number) {
 export interface AddTaskInput {
   title: string;
   project?: string | null;
+  description?: string | null;
   plannedStart?: string | null;
   plannedDurationMin?: number | null;
   isNight?: boolean;
@@ -61,20 +63,21 @@ export async function addTask(reportId: number, input: AddTaskInput): Promise<{ 
   if (!input.title?.trim()) throw new Error("TITLE_REQUIRED");
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
-    // 추가는 작성 가능 status에서만(반려/제출이후 추가 불가 — 반려는 기존 행 수정만)
-    if (!WORK_STATUSES.includes(status)) throw new Error("LOCKED_TASK");
+    // 작성 가능 status + 반려(작성자가 보고서를 고치는 중)에서 추가 허용. 제출이후(검수대기/승인 등)는 잠금.
+    if (!WORK_STATUSES.includes(status) && status !== "반려") throw new Error("LOCKED_TASK");
 
     const ord = await c.query<{ n: number }>(
       `SELECT COALESCE(MAX(sort_order)+1,0) AS n FROM tasks WHERE report_id=$1`,
       [reportId],
     );
     const r = await c.query<{ id: number }>(
-      `INSERT INTO tasks(report_id, section_id, project, title, planned_start, planned_duration_min, status, sort_order, is_night)
-       VALUES ($1,NULL,$2,$3,$4,$5,'계획',$6,$7) RETURNING id`,
+      `INSERT INTO tasks(report_id, section_id, project, title, description, planned_start, planned_duration_min, status, sort_order, is_night)
+       VALUES ($1,NULL,$2,$3,$4,$5,$6,'계획',$7,$8) RETURNING id`,
       [
         reportId,
         input.project?.trim() || null,
         input.title.trim(),
+        input.description?.trim() || null,
         input.plannedStart || null,
         input.plannedDurationMin ?? null,
         ord.rows[0].n,
@@ -152,15 +155,27 @@ export async function reopenTask(reportId: number, taskId: number, ackReject?: b
   });
 }
 
-/** 업무 상태/지연사유/실제소요 갱신 */
+/** 업무 상태/지연사유/실제소요 갱신 + (edit=true 시) 업무명/프로젝트/예정·소요 수정 */
 export async function updateTask(
   reportId: number,
   taskId: number,
-  patch: { status?: string; holdReason?: string | null; actualMin?: number | null; ackReject?: boolean },
+  patch: {
+    status?: string;
+    holdReason?: string | null;
+    actualMin?: number | null;
+    ackReject?: boolean;
+    edit?: boolean;
+    title?: string;
+    project?: string | null;
+    description?: string | null;
+    plannedStart?: string | null;
+    plannedDurationMin?: number | null;
+  },
 ): Promise<void> {
   // 완결/지연 전이는 completed_at 정합(CHECK)이 필요 → closeTask/reopenTask 전용. 여기선 미완 상태만 허용.
   if (patch.status != null && patch.status !== "계획" && patch.status !== "진행중")
     throw new Error("BAD_STATUS");
+  if (patch.edit && !patch.title?.trim()) throw new Error("TITLE_REQUIRED");
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
     const t = await c.query<{ reject_state: string | null }>(
@@ -172,10 +187,36 @@ export async function updateTask(
     assertSawReject(status, t.rows[0].reject_state, patch.ackReject);
     await c.query(
       `UPDATE tasks SET status=COALESCE($3,status), hold_reason=$4,
-              actual_duration_min=COALESCE($5,actual_duration_min), updated_at=now()
+              actual_duration_min=COALESCE($5,actual_duration_min),
+              title = CASE WHEN $6 THEN COALESCE($7,title) ELSE title END,
+              project = CASE WHEN $6 THEN $8 ELSE project END,
+              planned_start = CASE WHEN $6 THEN $9 ELSE planned_start END,
+              planned_duration_min = CASE WHEN $6 THEN $10 ELSE planned_duration_min END,
+              description = CASE WHEN $6 THEN $11 ELSE description END,
+              updated_at=now()
          WHERE id=$1 AND report_id=$2`,
-      [taskId, reportId, patch.status ?? null, patch.holdReason ?? null, patch.actualMin ?? null],
+      [
+        taskId, reportId, patch.status ?? null, patch.holdReason ?? null, patch.actualMin ?? null,
+        !!patch.edit, patch.title?.trim() ?? null, patch.project?.trim() || null,
+        patch.plannedStart || null, patch.plannedDurationMin ?? null, patch.description?.trim() || null,
+      ],
     );
+    await touch(c, reportId);
+  });
+}
+
+/** 업무 삭제(작성 가능 status, 행단위 편집 규칙 동일). 댓글/첨부/반려는 CASCADE. */
+export async function deleteTask(reportId: number, taskId: number, ackReject?: boolean): Promise<void> {
+  return tx(async (c) => {
+    const status = await loadStatus(c, reportId);
+    const t = await c.query<{ reject_state: string | null }>(
+      `SELECT reject_state FROM tasks WHERE id=$1 AND report_id=$2`,
+      [taskId, reportId],
+    );
+    if (!t.rows[0]) throw new Error("NOT_FOUND");
+    assertRowEditable(status, t.rows[0].reject_state);
+    assertSawReject(status, t.rows[0].reject_state, ackReject);
+    await c.query(`DELETE FROM tasks WHERE id=$1 AND report_id=$2`, [taskId, reportId]);
     await touch(c, reportId);
   });
 }
@@ -400,6 +441,91 @@ export async function carryoverIncomplete(reportId: number): Promise<{ count: nu
   });
 }
 
+export interface CarryoverCandidate {
+  id: number;
+  project: string | null;
+  title: string;
+}
+
+/**
+ * 직전(비휴가) 보고서의 미완료 업무 중, 현재 보고서에 아직 없는(제목 기준) 항목 목록.
+ * '미완료 업무 불러오기' 팝업에서 사용자가 선택할 후보를 미리 보여주기 위함(이월 미실행).
+ */
+export async function listCarryoverCandidates(reportId: number): Promise<CarryoverCandidate[]> {
+  return tx(async (c) => {
+    const rep = await c.query<{ user_id: number; report_date: string; status: ReportStatus }>(
+      `SELECT user_id, to_char(report_date,'YYYY-MM-DD') AS report_date, status FROM daily_reports WHERE id=$1`,
+      [reportId],
+    );
+    const r = rep.rows[0];
+    if (!r) return [];
+    if (!WORK_STATUSES.includes(r.status)) return []; // 제출된 보고서엔 불러오기 비활성
+    const prior = await c.query<{ id: number }>(
+      `SELECT id FROM daily_reports WHERE user_id=$1 AND report_date < $2 AND is_vacation = false
+        ORDER BY report_date DESC LIMIT 1`,
+      [r.user_id, r.report_date],
+    );
+    if (!prior.rows[0]) return [];
+    const rows = await c.query<CarryoverCandidate>(
+      `SELECT p.id, p.project, p.title
+         FROM tasks p
+        WHERE p.report_id=$1 AND p.status <> '완결'
+          AND NOT EXISTS (SELECT 1 FROM tasks cur WHERE cur.report_id=$2 AND cur.title=p.title)
+        ORDER BY p.sort_order, p.id`,
+      [prior.rows[0].id, reportId],
+    );
+    return rows.rows;
+  });
+}
+
+/** 직전 보고서의 미완료 업무 중 선택된(prior task id) 항목만 오늘 할 일로 이월. */
+export async function carryoverSelected(reportId: number, taskIds: number[]): Promise<{ count: number }> {
+  return tx(async (c) => {
+    const rep = await c.query<{ user_id: number; report_date: string; status: ReportStatus }>(
+      `SELECT user_id, to_char(report_date,'YYYY-MM-DD') AS report_date, status
+         FROM daily_reports WHERE id=$1 FOR UPDATE`,
+      [reportId],
+    );
+    const r = rep.rows[0];
+    if (!r) throw new Error("NOT_FOUND");
+    if (!WORK_STATUSES.includes(r.status)) throw new Error("LOCKED");
+    if (taskIds.length === 0) return { count: 0 };
+
+    const prior = await c.query<{ id: number }>(
+      `SELECT id FROM daily_reports WHERE user_id=$1 AND report_date < $2 AND is_vacation = false
+        ORDER BY report_date DESC LIMIT 1`,
+      [r.user_id, r.report_date],
+    );
+    if (!prior.rows[0]) return { count: 0 };
+
+    // 선택된 id가 실제 직전 보고서의 미완료 업무인지 확인(임의 id 주입 방지)
+    const tasks = await c.query<{ id: number; project: string | null; title: string }>(
+      `SELECT id, project, title FROM tasks
+        WHERE report_id=$1 AND status <> '완결' AND id = ANY($2::int[]) ORDER BY sort_order, id`,
+      [prior.rows[0].id, taskIds],
+    );
+    let base = (
+      await c.query<{ n: number }>(`SELECT COALESCE(MAX(sort_order)+1,0) AS n FROM tasks WHERE report_id=$1`, [
+        reportId,
+      ])
+    ).rows[0].n;
+
+    let count = 0;
+    for (const t of tasks.rows) {
+      const dup = await c.query(`SELECT 1 FROM tasks WHERE report_id=$1 AND title=$2`, [reportId, t.title]);
+      if (dup.rows[0]) continue;
+      await c.query(
+        `INSERT INTO tasks(report_id, section_id, project, title, status, sort_order, carried_from_task_id)
+         VALUES ($1,NULL,$2,$3,'계획',$4,$5)`,
+        [reportId, t.project, t.title, base++, t.id],
+      );
+      count++;
+    }
+    await touch(c, reportId);
+    return { count };
+  });
+}
+
 /** 커뮤니케이션 기록 추가 (제출 전 보고서에만) */
 export async function addCommunication(
   reportId: number,
@@ -416,6 +542,20 @@ export async function addCommunication(
     await c.query(`UPDATE daily_reports SET no_communication=false WHERE id=$1`, [reportId]);
     await touch(c, reportId);
     return { id: r.rows[0].id };
+  });
+}
+
+/** 커뮤니케이션 기록 삭제 (소유자 + 미제출). 첨부는 CASCADE. */
+export async function deleteCommunication(commId: number, userId: number): Promise<void> {
+  return tx(async (c) => {
+    const row = await c.query<{ user_id: number; status: string; report_id: number }>(
+      `SELECT r.user_id, r.status, cm.report_id FROM communications cm JOIN daily_reports r ON r.id=cm.report_id WHERE cm.id=$1`,
+      [commId],
+    );
+    if (!row.rows[0]) throw new Error("NOT_FOUND");
+    if (row.rows[0].user_id !== userId) throw new Error("FORBIDDEN");
+    if (SUBMITTED.includes(row.rows[0].status)) throw new Error("LOCKED_SECTION");
+    await c.query(`DELETE FROM communications WHERE id=$1`, [commId]);
   });
 }
 

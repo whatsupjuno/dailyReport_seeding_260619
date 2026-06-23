@@ -1,0 +1,23 @@
+import { NextResponse } from "next/server";
+import { apiUser, badRequest, conflict, forbidden, unauthorized } from "@/lib/auth/api";
+import { createGroup } from "@/lib/data/admin";
+
+/** 그룹 생성 — 관리자 전용 */
+export async function POST(req: Request) {
+  const user = await apiUser();
+  if (!user) return unauthorized();
+  if (user.role !== "admin") return forbidden();
+
+  const body = (await req.json().catch(() => ({}))) as { name?: string; leaderId?: number | null };
+  if (!body.name?.trim()) return badRequest("그룹명을 입력해 주세요.");
+
+  try {
+    const res = await createGroup({ name: body.name.trim(), leaderId: body.leaderId ?? null });
+    return NextResponse.json({ ok: true, id: res.id });
+  } catch (e) {
+    const m = (e as Error).message;
+    if (m === "DUPLICATE_NAME") return conflict("이미 사용 중인 그룹명입니다.");
+    if (m === "NAME_REQUIRED") return badRequest("그룹명을 입력해 주세요.");
+    throw e;
+  }
+}

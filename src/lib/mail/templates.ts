@@ -28,7 +28,7 @@ export function otpEmail(to: string, toName: string, otp: string): MailMessage {
 export function reportInviteEmail(
   to: string,
   toName: string,
-  kind: "plan_invite" | "morning_close" | "afternoon_close" | "night_close" | "reminder" | "rejected",
+  kind: "plan_invite" | "morning_close" | "afternoon_close" | "night_close" | "reminder" | "rejected" | "submit_nag",
   link: string,
 ): MailMessage {
   const title: Record<string, string> = {
@@ -38,6 +38,7 @@ export function reportInviteEmail(
     night_close: "야간 업무 마감 시간입니다",
     reminder: "업무 보고가 아직 작성되지 않았어요",
     rejected: "보고서가 반려되었습니다 · 재작성이 필요해요",
+    submit_nag: "[독촉] 오늘 업무 보고서를 아직 제출하지 않았어요",
   };
   return {
     to,

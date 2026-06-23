@@ -13,8 +13,11 @@ export async function POST(req: Request) {
     email?: string;
     role?: "employee" | "group_leader" | "admin";
     groupId?: number | null;
+    loginCode?: string;
   };
   if (!body.name?.trim() || !body.loginId?.trim()) return badRequest("이름과 아이디를 입력해 주세요.");
+  const loginCode = body.loginCode?.trim();
+  if (loginCode && !/^\d{4}$/.test(loginCode)) return badRequest("인증번호는 숫자 4자리로 입력해 주세요.");
 
   try {
     const res = await createUser({
@@ -23,10 +26,13 @@ export async function POST(req: Request) {
       email: body.email?.trim() || `${body.loginId.trim()}@company.com`,
       role: body.role ?? "employee",
       groupId: body.groupId ?? null,
+      loginCode: loginCode || undefined,
     });
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {
-    if ((e as Error).message === "DUPLICATE_LOGIN_ID") return badRequest("이미 사용 중인 아이디입니다.");
+    const m = (e as Error).message;
+    if (m === "DUPLICATE_LOGIN_ID") return badRequest("이미 사용 중인 아이디입니다.");
+    if (m === "INVALID_CODE") return badRequest("인증번호는 숫자 4자리로 입력해 주세요.");
     throw e;
   }
 }

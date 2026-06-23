@@ -104,6 +104,16 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px rgba(59, 91, 219, 0.35);
 }
 
+/* 첨부·링크 펜딩행: 내부 입력은 테두리 없음 → 포커스 링을 바깥 래퍼(.attach-row)에 표시해
+   URL행 구분선과 이중선처럼 겹쳐 보이지 않게 한다. */
+.attach-row:focus-within {
+  border-color: #3b5bdb;
+  box-shadow: 0 0 0 3px rgba(59, 91, 219, 0.35);
+}
+.attach-row input:focus-visible {
+  box-shadow: none;
+}
+
 /* 스크롤바 */
 ::-webkit-scrollbar {
   width: 10px;
@@ -213,3 +223,7 @@ textarea:focus-visible {
     display: block !important;
   }
 }
+
+/* 목록 KPI 4카드 반응형 */
+@media (max-width: 860px) { .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; } }
+@media (max-width: 520px) { .kpi-grid { grid-template-columns: 1fr !important; } }

@@ -169,8 +169,8 @@ export default function CommentDrawer({
               </div>
             </>
           ) : (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", background: "#F7F8FA", border: "1px solid #E2E5EB", borderRadius: 8, padding: "10px 12px" }}>
-              <span style={{ fontSize: 13, color: "#6B7280" }}>이 업무에 댓글을 남길 권한이 없습니다.</span>
+            <div data-testid="comment-readonly" style={{ display: "flex", gap: 8, alignItems: "center", background: "#F7F8FA", border: "1px solid #E2E5EB", borderRadius: 8, padding: "10px 12px" }}>
+              <span style={{ fontSize: 13, color: "#6B7280" }}>{role === "관리자" ? "관리자는 댓글을 열람만 할 수 있어요." : "이 업무에 댓글을 남길 권한이 없습니다."}</span>
             </div>
           )}
         </div>

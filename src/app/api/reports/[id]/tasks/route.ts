@@ -16,16 +16,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = (await req.json().catch(() => ({}))) as {
     title?: string;
     project?: string;
+    description?: string;
     plannedStart?: string;
     plannedDurationMin?: number;
     isNight?: boolean;
   };
   if (!body.title?.trim()) return badRequest("업무명을 입력해 주세요.");
+  if ((body.description ?? "").length > 5000) return badRequest("업무 설명은 최대 5,000자입니다.");
 
   try {
     const res = await addTask(reportId, {
       title: body.title.trim(),
       project: body.project?.trim() || null,
+      description: body.description?.trim() || null,
       plannedStart: body.plannedStart || null,
       plannedDurationMin: body.plannedDurationMin ?? null,
       isNight: !!body.isNight,

@@ -14,11 +14,16 @@
 `deploy/cron-dispatch.sh` + 루트 crontab:
 ```
 CRON_TZ=Asia/Seoul
-30 8  * * 1-5  /opt/apps/seeding/cron-dispatch.sh plan_invite       # 오늘 계획 안내
-50 11 * * 1-5  /opt/apps/seeding/cron-dispatch.sh morning_close     # 오전 마감 안내
-50 17 * * 1-5  /opt/apps/seeding/cron-dispatch.sh afternoon_close   # 오후 마감 안내
+30 8  * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh plan_invite       # 오늘 계획 안내
+50 11 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh morning_close     # 오전 마감 안내
+50 17 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh afternoon_close   # 오후 마감 안내
+*/10 20-22 * * 1-5 /opt/apps/seeding/deploy/cron-dispatch.sh submit_nag      # 미제출 독촉(10분 간격)
 ```
+> ⚠️ crontab은 **레포에 포함된 `deploy/cron-dispatch.sh`** 경로를 써야 함. (루트 `/opt/apps/seeding/cron-dispatch.sh`는 레포에 없어 `rsync --delete` 동기화 시 삭제되어 cron이 전부 실패했던 이력 있음 — 2026-06.)
 로그: `/var/log/seeding-dispatch.log`. 각 발송은 당일 보고서를 보장하고 `notifications`에 기록.
+
+> **submit_nag(미제출 독촉)**: 20:00 이후, **야간 업무가 없는데 아직 제출하지 않은** 사용자에게만 **10분 간격**으로 발송. 사용자당 당일 **최대 30회**(`notifications`의 submit_nag 수로 캡). **제출 완료/야간 업무 있음이면 즉시 제외**(매 주기 재확인). 코드(`dispatch.ts`)에 20:00 이전 게이트가 있어 cron 시간대(`20-22`)와 이중 안전.
+> 참고: 10분 간격 + `20-22`시 창이면 실제로는 20:00~22:50에 **최대 ~18회** 발송(캡 30은 안전 상한). 30회를 끝까지 채우려면(≈01:00까지) cron 시간대를 넓혀야 함.
 
 ## 재배포 절차
 ```bash

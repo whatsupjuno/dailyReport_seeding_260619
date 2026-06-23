@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export interface ShellUser {
@@ -20,8 +21,12 @@ const NAV = [
 export default function AppShell({ user, children }: { user: ShellUser; children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // 라우트 이동 시 좌측 드로어 자동 닫힘
+  useEffect(() => { setDrawerOpen(false); }, [pathname]);
 
   const items = NAV.filter((n) => !("roles" in n) || (n.roles as readonly string[]).includes(user.role));
+  const adminSub = [{ href: "/admin/users", label: "사용자 관리" }, { href: "/admin/groups", label: "그룹 관리" }];
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -48,7 +53,26 @@ export default function AppShell({ user, children }: { user: ShellUser; children
           gap: 12,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* ☰ 로고 = 좌측 메뉴 토글(모바일). 데스크톱은 좌측 LNB가 항상 보이므로 드로어 미표시. */}
+        <button
+          type="button"
+          onClick={() => setDrawerOpen((o) => !o)}
+          aria-label="메뉴 열기"
+          aria-expanded={drawerOpen}
+          data-testid="menu-toggle"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "manipulation",
+          }}
+        >
           <div
             style={{
               width: 28,
@@ -65,7 +89,7 @@ export default function AppShell({ user, children }: { user: ShellUser; children
             </svg>
           </div>
           <span style={{ fontSize: 16, fontWeight: 700 }}>Seeding</span>
-        </div>
+        </button>
         <div style={{ flex: 1 }} />
         <div
           style={{
@@ -119,6 +143,50 @@ export default function AppShell({ user, children }: { user: ShellUser; children
         </button>
       </div>
 
+      {/* 좌측 슬라이드 메뉴(모바일) — ☰ 토글. sm-only라 데스크톱(LNB 상시 노출)에선 미표시.
+          배경/항목 모두 button·a(네이티브 탭) + touch-action으로 iOS 사파리 탭 보장. */}
+      {drawerOpen && (
+        <div className="sm-only">
+          <button
+            type="button"
+            aria-label="메뉴 닫기"
+            data-testid="drawer-backdrop"
+            onClick={() => setDrawerOpen(false)}
+            style={{ position: "fixed", top: 56, left: 0, right: 0, bottom: 0, zIndex: 60, background: "rgba(16,24,40,.4)", border: "none", padding: 0, cursor: "pointer", touchAction: "manipulation" }}
+          />
+          <nav
+            data-testid="mobile-drawer"
+            style={{ position: "fixed", top: 56, left: 0, bottom: 0, zIndex: 61, width: "min(264px, 82vw)", background: "#fff", borderRight: "1px solid #E2E5EB", padding: 12, display: "flex", flexDirection: "column", gap: 2, boxShadow: "4px 0 18px rgba(16,24,40,.16)", overflowY: "auto", WebkitOverflowScrolling: "touch" }}
+          >
+            {items.map((n) => {
+              const on = active(n.match);
+              return (
+                <Link
+                  key={n.key}
+                  href={n.href}
+                  data-testid={`drawer-nav-${n.key}`}
+                  onClick={() => setDrawerOpen(false)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", fontSize: 15, fontWeight: 600, padding: "12px 12px", borderRadius: 8, background: on ? "#EEF2FF" : "transparent", color: on ? "#2F49B0" : "#3A4150", touchAction: "manipulation" }}
+                >
+                  {n.label}
+                </Link>
+              );
+            })}
+            {user.role === "admin" && pathname.startsWith("/admin") && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#9AA1AE", padding: "4px 12px" }}>메뉴</div>
+                {adminSub.map((s) => {
+                  const on = active(s.href);
+                  return (
+                    <Link key={s.href} href={s.href} onClick={() => setDrawerOpen(false)} style={{ display: "block", textDecoration: "none", fontSize: 14, fontWeight: 600, padding: "10px 12px", borderRadius: 8, background: on ? "#EEF2FF" : "transparent", color: on ? "#2F49B0" : "#6B7280", touchAction: "manipulation" }}>{s.label}</Link>
+                  );
+                })}
+              </div>
+            )}
+          </nav>
+        </div>
+      )}
+
       <div className="app-shell" style={{ alignItems: "flex-start" }}>
         {/* LNB (PC) */}
         <aside
@@ -157,44 +225,22 @@ export default function AppShell({ user, children }: { user: ShellUser; children
                 </Link>
               );
             })}
+            {/* 관리 하위 메뉴(사용자 관리 / 그룹 관리) — 디자인 사이드바 '메뉴' 섹션 */}
+            {user.role === "admin" && pathname.startsWith("/admin") && (
+              <div style={{ marginTop: 14 }} data-testid="admin-submenu">
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#9AA1AE", padding: "4px 10px" }}>메뉴</div>
+                {[{ href: "/admin/users", label: "사용자 관리" }, { href: "/admin/groups", label: "그룹 관리" }].map((s) => {
+                  const on = active(s.href);
+                  return (
+                    <Link key={s.href} href={s.href} style={{ display: "block", textDecoration: "none", fontSize: 13, fontWeight: 600, padding: "8px 10px", borderRadius: 8, background: on ? "#EEF2FF" : "transparent", color: on ? "#2F49B0" : "#6B7280" }}>{s.label}</Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </aside>
 
-        {/* 모바일 가로 내비 */}
-        <div className="sm-only" style={{ width: "100%" }}>
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              overflowX: "auto",
-              padding: "10px 12px",
-              background: "#fff",
-              borderBottom: "1px solid #E2E5EB",
-            }}
-          >
-            {items.map((n) => {
-              const on = active(n.match);
-              return (
-                <Link
-                  key={n.key}
-                  href={n.href}
-                  style={{
-                    whiteSpace: "nowrap",
-                    textDecoration: "none",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    padding: "7px 12px",
-                    borderRadius: 9999,
-                    background: on ? "#3B5BDB" : "#F7F8FA",
-                    color: on ? "#fff" : "#3A4150",
-                  }}
-                >
-                  {n.label}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
+        {/* 모바일 내비는 좌상단 ☰ → 좌측 슬라이드 드로어로 통일(위 drawerOpen 블록). 기존 가로 알약 내비 제거. */}
 
         <main style={{ flex: 1, minWidth: 0 }}>{children}</main>
       </div>

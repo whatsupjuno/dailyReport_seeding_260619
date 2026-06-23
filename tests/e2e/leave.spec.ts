@@ -23,6 +23,19 @@ test("작성자: 휴가로 전환 → 휴직(사유 필수) → 빈 사유 차�
   await expect(page.getByTestId("report-status")).toContainText("검수대기");
 });
 
+test("근태 변경 → 하단 취소 버튼으로 업무 작성 복귀", async ({ page }) => {
+  await login(page, "kim.jiwon"); // 보고서 없음 → 신규 work
+  await page.getByTestId("go-vacation").click();
+  await expect(page.getByTestId("vacation-card")).toBeVisible();
+  // 하단 액션바에 취소 + 제출(휴가로 제출) 한 쌍
+  await expect(page.getByTestId("vacation-cancel")).toBeVisible();
+  await expect(page.getByTestId("primary-action")).toContainText("제출");
+  // 취소 → 휴가 카드 사라지고 업무 작성 화면 복귀(헤더 근태 변경 다시 노출)
+  await page.getByTestId("vacation-cancel").click();
+  await expect(page.getByTestId("vacation-card")).toHaveCount(0);
+  await expect(page.getByTestId("go-vacation")).toBeVisible();
+});
+
 test("검수자: 휴직 보고서는 부재 사유 카드로 표시", async ({ page }) => {
   await login(page, "choi.minho");
   await page.goto("/review");

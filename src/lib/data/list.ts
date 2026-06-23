@@ -5,6 +5,7 @@ export interface MgrRow {
   name: string;
   dept: string | null;
   report_id: number | null;
+  report_date: string | null; // 단일-날짜 조회 시 그 날짜, 상태별(날짜 무관) 조회 시 보고서 실제 날짜
   status: string; // 미작성 if no report
   submitted_at: string | null;
   is_vacation: boolean;
@@ -26,7 +27,8 @@ export async function listScopeReports(opts: {
   }
   return query<MgrRow>(
     `SELECT u.id AS user_id, u.name, g.name AS dept,
-            r.id AS report_id, COALESCE(r.status::text,'미작성') AS status,
+            r.id AS report_id, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+            COALESCE(r.status::text,'미작성') AS status,
             r.submitted_at, COALESCE(r.is_vacation,false) AS is_vacation,
             COALESCE(tc.total,0) AS total, COALESCE(tc.done,0) AS done, COALESCE(tc.delayed,0) AS delayed
        FROM users u
@@ -42,6 +44,46 @@ export async function listScopeReports(opts: {
        ) tc ON tc.report_id = r.id
       WHERE ${where}
       ORDER BY u.name`,
+    params,
+  );
+}
+
+/**
+ * 관리자/그룹장 목록: 날짜와 무관하게 특정 상태(예: 승인)인 보고서를 최근순으로.
+ * 단일-날짜 스냅샷(listScopeReports)에선 과거 승인분이 안 보이므로, '승인 완료' 이력 조회용.
+ */
+export async function listScopeReportsByStatus(opts: {
+  groupId: number | null; // null = 전체(admin)
+  statuses: string[];
+  limit?: number;
+}): Promise<MgrRow[]> {
+  const params: unknown[] = [opts.statuses];
+  let where = "u.active AND r.status::text = ANY($1::text[])";
+  if (opts.groupId != null) {
+    params.push(opts.groupId);
+    where += ` AND u.group_id = $${params.length}`;
+  }
+  params.push(opts.limit ?? 300);
+  return query<MgrRow>(
+    `SELECT u.id AS user_id, u.name, g.name AS dept,
+            r.id AS report_id, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+            r.status::text AS status,
+            r.submitted_at, COALESCE(r.is_vacation,false) AS is_vacation,
+            COALESCE(tc.total,0) AS total, COALESCE(tc.done,0) AS done, COALESCE(tc.delayed,0) AS delayed
+       FROM daily_reports r
+       JOIN users u ON u.id = r.user_id
+       LEFT JOIN groups g ON g.id = u.group_id
+       LEFT JOIN (
+         SELECT t.report_id, count(*) AS total,
+                count(*) FILTER (WHERE t.status='완결') AS done,
+                count(*) FILTER (WHERE t.status='지연') AS delayed
+           FROM tasks t LEFT JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind IS NULL OR s.kind <> 'plan'
+          GROUP BY t.report_id
+       ) tc ON tc.report_id = r.id
+      WHERE ${where}
+      ORDER BY r.report_date DESC, u.name
+      LIMIT $${params.length}`,
     params,
   );
 }

@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/guard";
-import { listMyReports, listScopeReports, type MgrRow } from "@/lib/data/list";
+import { listMyReports, listScopeReports, listScopeReportsByStatus, type MgrRow } from "@/lib/data/list";
 import { listGroupOptions } from "@/lib/data/admin";
+import { userHasOtherReviewer } from "@/lib/data/review";
+import FilterBar from "./FilterBar";
 import { statusMeta } from "@/lib/domain/status";
 import { todayKstISO, shortDate, weekday } from "@/lib/date";
 
@@ -30,9 +32,7 @@ function Badge({ label }: { label: string }) {
   return <span style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{label}</span>;
 }
 
-const inputStyle: React.CSSProperties = { height: 36, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 10px", fontFamily: "inherit", fontSize: 13, color: "#3A4150", background: "#fff" };
-
-type SP = Promise<{ tab?: string; q?: string; group?: string; date?: string }>;
+type SP = Promise<{ tab?: string; q?: string; group?: string; date?: string; page?: string }>;
 
 export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
@@ -46,6 +46,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
     const groupFilter = user.role === "admin" ? (sp.group ? Number(sp.group) : null) : user.group_id;
     const groups = user.role === "admin" ? await listGroupOptions() : [];
     const all = await listScopeReports({ groupId: groupFilter, date });
+    // '승인' 탭은 날짜 무관(최근 누적) — 과거에 검수 완료(승인)한 보고서도 목록에서 볼 수 있게.
+    const approvedAll = await listScopeReportsByStatus({ groupId: groupFilter, statuses: ["승인"], limit: 300 });
+    const isApprovedView = tab === "approved";
+    // 본인 행: 위/동급 검수자가 없으면(최상위) 본인 보고서를 직접 검수(셀프 승인) 가능 → '검수' 노출. 아니면 '보기'(내 보고서 편집).
+    const selfReviewAllowed = !(await userHasOtherReviewer({ id: user.id, group_id: user.group_id }));
 
     const matchTab = (r: MgrRow): boolean => {
       switch (tab) {
@@ -64,65 +69,121 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
       { k: "delay", label: "지연", n: cnt((r) => r.delayed > 0) },
       { k: "pending", label: "검수대기", n: cnt((r) => r.status === "검수대기") },
       { k: "rejected", label: "반려", n: cnt((r) => r.status === "반려") },
-      { k: "approved", label: "승인", n: cnt((r) => r.status === "승인") },
+      { k: "approved", label: "승인", n: approvedAll.length },
     ];
-    const rows = all.filter(matchTab).filter((r) => !q || r.name.includes(q) || (r.dept ?? "").includes(q));
-    const qs = (k: string) => `?tab=${k}&date=${date}${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.group ? `&group=${sp.group}` : ""}`;
+    const qs = (k: string, pg = 1) => `?tab=${k}&date=${date}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.group ? `&group=${sp.group}` : ""}`;
+
+    // KPI 집계
+    const totalN = all.length;
+    const submittedN = all.filter((r) => ["검수대기", "승인", "반려", "재제출", "제출완료"].includes(r.status)).length;
+    const submittedPct = totalN > 0 ? Math.round((submittedN / totalN) * 100) : 0;
+    const notSubmittedN = cnt((r) => r.status === "미작성" || r.status === "작성중");
+    const delayN = cnt((r) => r.delayed > 0);
+    const pendingN = cnt((r) => r.status === "검수대기");
+    const kpis = [
+      { label: "오늘 제출", value: `${submittedN}/${totalN}명`, color: "#1A1F2B", icon: "", sub: `진행률 ${submittedPct}%`, bar: submittedPct as number | undefined },
+      { label: "미제출", value: `${notSubmittedN}명`, color: "#DC2626", icon: "", sub: "독려가 필요해요", bar: undefined },
+      { label: "지연", value: `${delayN}건`, color: "#DC2626", icon: "❗", sub: "마감 초과", bar: undefined },
+      { label: "검수 대기", value: `${pendingN}건`, color: "#B7860B", icon: "⌛", sub: "확인이 필요해요", bar: undefined },
+    ];
+
+    // 페이지네이션. 승인 탭은 날짜 무관(approvedAll), 그 외는 단일-날짜 스냅샷.
+    const PAGE = 12;
+    const filtered = (isApprovedView ? approvedAll : all.filter(matchTab)).filter((r) => !q || r.name.includes(q) || (r.dept ?? "").includes(q));
+    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE));
+    const page = Math.min(Math.max(1, Number(sp.page ?? "1") || 1), pageCount);
+    const rows = filtered.slice((page - 1) * PAGE, page * PAGE);
+
+    // 기간 프리셋(최근 14일 — 단일 날짜 백엔드 호환)
+    const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    const tISO = todayKstISO();
+    const datePresets = Array.from({ length: 14 }, (_, i) => addDays(tISO, -i)).map((v) => ({ value: v, label: v === tISO ? "오늘" : v === addDays(tISO, -1) ? "어제" : `${shortDate(v)} (${weekday(v)})` }));
+    if (!datePresets.some((d) => d.value === date)) datePresets.unshift({ value: date, label: `${shortDate(date)} (${weekday(date)})` });
+
+    const reviewCell = (status: string) => {
+      const m: Record<string, [string, string, string]> = { 검수대기: ["대기", "#B7860B", "#FBF4DA"], 승인: ["승인", "#1F7A46", "#E7F5EC"], 반려: ["반려", "#B91C1C", "#FCEBEB"], 계획제출: ["계획", "#2563EB", "#E6EEFD"] };
+      const v = m[status];
+      return v ? <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 9999, color: v[1], background: v[2] }}>{v[0]}</span> : <span style={{ color: "#CBD0D9" }}>—</span>;
+    };
 
     return (
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px 60px" }}>
         <div style={{ fontSize: 22, fontWeight: 700 }}>팀 보고 현황</div>
-        <div style={{ fontSize: 14, color: "#6B7280", marginTop: 4, marginBottom: 20 }}>{user.role === "admin" ? "전체 팀" : user.group_name} · {date}</div>
+        <div style={{ fontSize: 14, color: "#6B7280", marginTop: 4, marginBottom: 20 }}>{isApprovedView ? "승인 완료된 보고서를 날짜와 관계없이 모아 볼 수 있어요." : "오늘 팀의 제출·검수 상태를 한눈에 확인하세요."}</div>
 
-        {/* 필터 */}
-        <form style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-          <input type="hidden" name="tab" value={tab} />
-          <input type="date" name="date" defaultValue={date} style={inputStyle} />
-          {user.role === "admin" && (
-            <select name="group" defaultValue={sp.group ?? ""} style={inputStyle}>
-              <option value="">전체 팀</option>
-              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-          )}
-          <input name="q" defaultValue={q} placeholder="이름·팀 검색" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
-          <button style={{ ...inputStyle, background: "#3B5BDB", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer", padding: "0 16px" }}>적용</button>
-        </form>
-
-        {/* 탭 */}
-        <div style={{ display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid #E2E5EB", marginBottom: 16 }}>
-          {tabs.map((t) => {
-            const on = tab === t.k;
-            return (
-              <Link key={t.k} href={qs(t.k)} style={{ display: "flex", alignItems: "center", gap: 7, textDecoration: "none", fontSize: 14, fontWeight: 600, color: on ? "#3B5BDB" : "#6B7280", padding: "10px 8px", borderBottom: `2px solid ${on ? "#3B5BDB" : "transparent"}`, whiteSpace: "nowrap" }}>
-                {t.label}<span style={{ fontSize: 11, fontWeight: 700, background: on ? "#EEF2FF" : "#F1F2F4", color: on ? "#2F49B0" : "#6B7280", borderRadius: 9999, padding: "1px 7px" }} className="tnum">{t.n}</span>
-              </Link>
-            );
-          })}
+        {/* KPI 4카드 */}
+        <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }} data-testid="kpi-grid">
+          {kpis.map((k) => (
+            <div key={k.label} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: "16px 18px", boxShadow: "0 1px 3px rgba(16,24,40,.08)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#6B7280" }}>{k.icon ? `${k.icon} ` : ""}{k.label}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: k.color, marginTop: 6 }} className="tnum">{k.value}</div>
+              {k.bar !== undefined ? (
+                <div style={{ height: 6, background: "#EFF1F5", borderRadius: 9999, overflow: "hidden", marginTop: 10 }}><div style={{ height: "100%", width: `${k.bar}%`, background: "#3B5BDB" }} /></div>
+              ) : null}
+              <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: k.bar !== undefined ? 6 : 10 }}>{k.sub}</div>
+            </div>
+          ))}
         </div>
 
+        {/* 탭 + 필터 + 테이블 단일 카드 */}
         <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }} data-testid="mgr-table">
-            <thead><tr style={{ background: "#F7F8FA" }}>
-              {["직원", "상태", "완결율", "지연", "제출시각", ""].map((h) => <th key={h} style={{ textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "11px 16px" }}>{h}</th>)}
+          <div style={{ display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid #E2E5EB", padding: "4px 16px 0" }}>
+            {tabs.map((t) => {
+              const on = tab === t.k;
+              return (
+                <Link key={t.k} href={qs(t.k)} style={{ display: "flex", alignItems: "center", gap: 7, textDecoration: "none", fontSize: 14, fontWeight: 600, color: on ? "#3B5BDB" : "#6B7280", padding: "10px 8px", borderBottom: `2px solid ${on ? "#3B5BDB" : "transparent"}`, whiteSpace: "nowrap" }}>
+                  {t.label}<span style={{ fontSize: 11, fontWeight: 700, background: on ? "#EEF2FF" : "#F1F2F4", color: on ? "#2F49B0" : "#6B7280", borderRadius: 9999, padding: "1px 7px" }} className="tnum">{t.n}</span>
+                </Link>
+              );
+            })}
+          </div>
+          <FilterBar tab={tab} date={date} q={q} group={sp.group ?? ""} isAdmin={user.role === "admin"} groups={groups} datePresets={datePresets} hideDate={isApprovedView} />
+          <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }} data-testid="mgr-table">
+            <thead><tr style={{ background: "#F7F8FA", borderTop: "1px solid #E2E5EB" }}>
+              {["직원", "날짜", "상태", "검수", "완결율", "지연", "제출시각", ""].map((h, i) => <th key={i} style={{ textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "11px 16px" }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.map((r) => {
+                const isOwn = r.user_id === user.id;
+                const pending = r.status === "검수대기";
+                const review = pending && (!isOwn || selfReviewAllowed);
+                const rowDate = r.report_date ?? date;
+                const href = isOwn && !review ? `/report/${rowDate}` : `/review/${r.report_id}`;
+                return (
                 <tr key={r.user_id} style={{ borderTop: "1px solid #E2E5EB" }} data-testid="mgr-row">
-                  <td style={{ padding: "13px 16px" }}><div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div><div style={{ fontSize: 11, color: "#9AA1AE" }}>{r.dept}</div></td>
+                  <td style={{ padding: "13px 16px" }}><div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}{isOwn ? <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginLeft: 6 }}>· 나</span> : null}</div><div style={{ fontSize: 11, color: "#9AA1AE" }}>{r.dept}</div></td>
+                  <td style={{ padding: "13px 16px", fontSize: 13, color: "#6B7280" }} className="tnum">{shortDate(rowDate)} ({weekday(rowDate)})</td>
                   <td style={{ padding: "13px 16px" }}><Badge label={r.status} /></td>
+                  <td style={{ padding: "13px 16px" }}>{reviewCell(r.status)}</td>
                   <td style={{ padding: "13px 16px" }}><Bar done={r.done} total={r.total} /></td>
                   <td style={{ padding: "13px 16px" }}><span style={{ fontSize: 12, fontWeight: 600, color: r.delayed > 0 ? "#DC2626" : "#1F9254" }}>{r.delayed > 0 ? `지연 ${r.delayed}` : "정상"}</span></td>
                   <td style={{ padding: "13px 16px", fontSize: 13, color: "#6B7280" }} className="tnum">{timeOf(r.submitted_at)}</td>
                   <td style={{ padding: "13px 16px", textAlign: "right" }}>
                     {r.report_id ? (
-                      <Link href={`/review/${r.report_id}`} data-testid={`row-action-${r.user_id}`} style={{ border: r.status === "검수대기" ? "none" : "1px solid #CBD0D9", background: r.status === "검수대기" ? "#3B5BDB" : "#fff", color: r.status === "검수대기" ? "#fff" : "#3A4150", borderRadius: 7, fontSize: 12, fontWeight: 600, padding: "6px 14px", textDecoration: "none" }}>{r.status === "검수대기" ? "검수" : "보기"}</Link>
+                      <Link href={href} data-testid={`row-action-${r.user_id}`} style={{ border: "1px solid #CBD0D9", background: "#fff", color: "#3A4150", borderRadius: 7, fontSize: 12, fontWeight: 600, padding: "6px 12px", textDecoration: "none", whiteSpace: "nowrap" }}>상세 ›</Link>
                     ) : <span style={{ color: "#CBD0D9" }}>—</span>}
                   </td>
                 </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: "#9AA1AE" }}>해당 조건의 보고서가 없습니다.</td></tr>}
+                );
+              })}
+              {rows.length === 0 && <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "#9AA1AE" }}>해당 조건의 보고서가 없습니다.</td></tr>}
             </tbody>
           </table>
+          </div>
+        </div>
+
+        {/* 총건수 + 페이지네이션 */}
+        <div style={{ display: "flex", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 10 }}>
+          <span style={{ fontSize: 13, color: "#6B7280" }}>총 {filtered.length}건</span>
+          <div style={{ flex: 1 }} />
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <Link href={qs(tab, Math.max(1, page - 1))} aria-label="이전 페이지" style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #E2E5EB", borderRadius: 8, color: page <= 1 ? "#CBD0D9" : "#3A4150", textDecoration: "none", background: "#fff", pointerEvents: page <= 1 ? "none" : "auto" }}>‹</Link>
+            {Array.from({ length: pageCount }, (_, i) => i + 1).map((pg) => (
+              <Link key={pg} href={qs(tab, pg)} style={{ minWidth: 32, height: 32, padding: "0 8px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${pg === page ? "#3B5BDB" : "#E2E5EB"}`, borderRadius: 8, color: pg === page ? "#fff" : "#3A4150", background: pg === page ? "#3B5BDB" : "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none" }} className="tnum">{pg}</Link>
+            ))}
+            <Link href={qs(tab, Math.min(pageCount, page + 1))} aria-label="다음 페이지" style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #E2E5EB", borderRadius: 8, color: page >= pageCount ? "#CBD0D9" : "#3A4150", textDecoration: "none", background: "#fff", pointerEvents: page >= pageCount ? "none" : "auto" }}>›</Link>
+          </div>
         </div>
       </div>
     );
@@ -142,42 +203,86 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
   const tabs = [
     { k: "all", label: "전체", n: allMine.length },
     { k: "draft", label: "작성중", n: allMine.filter((r) => r.status === "작성중" || r.status === "미작성").length },
-    { k: "submitted", label: "제출", n: allMine.filter((r) => ["검수대기", "제출완료", "재제출"].includes(r.status)).length },
+    { k: "submitted", label: "제출완료", n: allMine.filter((r) => ["검수대기", "제출완료", "재제출"].includes(r.status)).length },
     { k: "rejected", label: "반려", n: allMine.filter((r) => r.status === "반려").length },
     { k: "approved", label: "승인", n: allMine.filter((r) => r.status === "승인").length },
   ];
-  const rows = allMine.filter((r) => matchTab(r.status));
+  const rejectedN = allMine.filter((r) => r.status === "반려").length;
+
+  const empFiltered = allMine
+    .filter((r) => matchTab(r.status))
+    .filter((r) => r.report_date <= date)
+    .filter((r) => !q || `${shortDate(r.report_date)} ${weekday(r.report_date)} ${r.status}`.includes(q));
+  const PAGE = 12;
+  const empPageCount = Math.max(1, Math.ceil(empFiltered.length / PAGE));
+  const page = Math.min(Math.max(1, Number(sp.page ?? "1") || 1), empPageCount);
+  const rows = empFiltered.slice((page - 1) * PAGE, page * PAGE);
+
+  const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const tISO = todayKstISO();
+  const datePresets = Array.from({ length: 14 }, (_, i) => addDays(tISO, -i)).map((v) => ({ value: v, label: v === tISO ? "오늘" : v === addDays(tISO, -1) ? "어제" : `${shortDate(v)} (${weekday(v)})` }));
+  if (!datePresets.some((d) => d.value === date)) datePresets.unshift({ value: date, label: `${shortDate(date)} (${weekday(date)})` });
+  const qs = (k: string, pg = 1) => `?tab=${k}&date=${date}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+  const reviewCell = (status: string) => {
+    const m: Record<string, [string, string, string]> = { 검수대기: ["대기", "#B7860B", "#FBF4DA"], 승인: ["승인", "#1F7A46", "#E7F5EC"], 반려: ["반려", "#B91C1C", "#FCEBEB"], 계획제출: ["계획", "#2563EB", "#E6EEFD"] };
+    const v = m[status];
+    return v ? <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 9999, color: v[1], background: v[2] }}>{v[0]}</span> : <span style={{ color: "#CBD0D9" }}>—</span>;
+  };
 
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px 24px 60px" }}>
       <div style={{ fontSize: 22, fontWeight: 700 }}>내 보고서</div>
-      <div style={{ fontSize: 14, color: "#6B7280", marginTop: 4, marginBottom: 16 }}>내가 작성한 일일 업무 보고서</div>
-      <div style={{ display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid #E2E5EB", marginBottom: 16 }}>
-        {tabs.map((t) => {
-          const on = tab === t.k;
-          return (
-            <Link key={t.k} href={`?tab=${t.k}`} style={{ display: "flex", alignItems: "center", gap: 7, textDecoration: "none", fontSize: 14, fontWeight: 600, color: on ? "#3B5BDB" : "#6B7280", padding: "10px 8px", borderBottom: `2px solid ${on ? "#3B5BDB" : "transparent"}`, whiteSpace: "nowrap" }}>
-              {t.label}<span style={{ fontSize: 11, fontWeight: 700, background: on ? "#EEF2FF" : "#F1F2F4", color: on ? "#2F49B0" : "#6B7280", borderRadius: 9999, padding: "1px 7px" }} className="tnum">{t.n}</span>
-            </Link>
-          );
-        })}
-      </div>
+      <div style={{ fontSize: 14, color: "#6B7280", marginTop: 4, marginBottom: 16 }}>내가 작성한 일일 업무 보고서를 확인할 수 있어요.</div>
+
+      {rejectedN > 0 && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }} data-testid="reject-banner">
+          <span style={{ color: "#B91C1C", fontWeight: 700 }}>↩</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#B91C1C" }}>반려된 보고서가 {rejectedN}건 있어요. 사유를 확인하고 재작성해 주세요.</span>
+        </div>
+      )}
+
       <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }} data-testid="emp-table">
-          <thead><tr style={{ background: "#F7F8FA" }}>{["날짜", "상태", "완결율", "지연", "제출시각"].map((h) => <th key={h} style={{ textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "11px 16px" }}>{h}</th>)}</tr></thead>
+        <div style={{ display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid #E2E5EB", padding: "4px 16px 0" }}>
+          {tabs.map((t) => {
+            const on = tab === t.k;
+            return (
+              <Link key={t.k} href={qs(t.k)} style={{ display: "flex", alignItems: "center", gap: 7, textDecoration: "none", fontSize: 14, fontWeight: 600, color: on ? "#3B5BDB" : "#6B7280", padding: "10px 8px", borderBottom: `2px solid ${on ? "#3B5BDB" : "transparent"}`, whiteSpace: "nowrap" }}>
+                {t.label}<span style={{ fontSize: 11, fontWeight: 700, background: on ? "#EEF2FF" : "#F1F2F4", color: on ? "#2F49B0" : "#6B7280", borderRadius: 9999, padding: "1px 7px" }} className="tnum">{t.n}</span>
+              </Link>
+            );
+          })}
+        </div>
+        <FilterBar tab={tab} date={date} q={q} group="" isAdmin={false} groups={[]} datePresets={datePresets} />
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }} data-testid="emp-table">
+          <thead><tr style={{ background: "#F7F8FA", borderTop: "1px solid #E2E5EB" }}>{["날짜", "상태", "검수", "완결율", "지연", "제출시각"].map((h) => <th key={h} style={{ textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "11px 16px" }}>{h}</th>)}</tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.report_id} style={{ borderTop: "1px solid #E2E5EB" }} data-testid="emp-row">
                 <td style={{ padding: "13px 16px", fontSize: 13, fontWeight: 600 }} className="tnum"><Link href={`/report/${r.report_date}`} style={{ color: "#1A1F2B", textDecoration: "none" }}>{shortDate(r.report_date)} ({weekday(r.report_date)})</Link></td>
                 <td style={{ padding: "13px 16px" }}><Badge label={r.status} /></td>
+                <td style={{ padding: "13px 16px" }}>{reviewCell(r.status)}</td>
                 <td style={{ padding: "13px 16px" }}><Bar done={r.done} total={r.total} /></td>
                 <td style={{ padding: "13px 16px" }}><span style={{ fontSize: 12, fontWeight: 600, color: r.delayed > 0 ? "#DC2626" : "#1F9254" }}>{r.delayed > 0 ? `지연 ${r.delayed}` : "정상"}</span></td>
                 <td style={{ padding: "13px 16px", fontSize: 13, color: "#6B7280" }} className="tnum">{timeOf(r.submitted_at)}</td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "#9AA1AE" }}>해당 조건의 보고서가 없습니다.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: "#9AA1AE" }}>해당 조건의 보고서가 없습니다.</td></tr>}
           </tbody>
         </table>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 10 }}>
+        <span style={{ fontSize: 13, color: "#6B7280" }}>총 {empFiltered.length}건</span>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <Link href={qs(tab, Math.max(1, page - 1))} aria-label="이전 페이지" style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #E2E5EB", borderRadius: 8, color: page <= 1 ? "#CBD0D9" : "#3A4150", textDecoration: "none", background: "#fff", pointerEvents: page <= 1 ? "none" : "auto" }}>‹</Link>
+          {Array.from({ length: empPageCount }, (_, i) => i + 1).map((pg) => (
+            <Link key={pg} href={qs(tab, pg)} style={{ minWidth: 32, height: 32, padding: "0 8px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${pg === page ? "#3B5BDB" : "#E2E5EB"}`, borderRadius: 8, color: pg === page ? "#fff" : "#3A4150", background: pg === page ? "#3B5BDB" : "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none" }} className="tnum">{pg}</Link>
+          ))}
+          <Link href={qs(tab, Math.min(empPageCount, page + 1))} aria-label="다음 페이지" style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #E2E5EB", borderRadius: 8, color: page >= empPageCount ? "#CBD0D9" : "#3A4150", textDecoration: "none", background: "#fff", pointerEvents: page >= empPageCount ? "none" : "auto" }}>›</Link>
+        </div>
       </div>
     </div>
   );

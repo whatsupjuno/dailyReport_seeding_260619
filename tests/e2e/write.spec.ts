@@ -9,8 +9,11 @@ test("어제 미완료 불러오기 → 업무 추가 → 마감(버킷) → 마
   await login(page, "oh.serim");
   await expect(page.getByText("오늘 할 일을 한 번에 적어두세요")).toBeVisible();
 
-  // 어제 미완료(컴포넌트 토큰 정리) 불러오기
+  // 미완료 업무 불러오기(팝업에서 선택 → 추가)
   await page.getByTestId("carryover").click();
+  await expect(page.getByTestId("carry-modal")).toBeVisible();
+  await expect(page.getByTestId("carry-candidate").filter({ hasText: "컴포넌트 토큰 정리" })).toBeVisible();
+  await page.getByTestId("carry-confirm").click();
   await expect(page.getByTestId("task-row").filter({ hasText: "컴포넌트 토큰 정리" })).toBeVisible();
 
   // 신규 업무 추가
@@ -43,6 +46,11 @@ test("계획 제출(1차) → 제출하기(최종) 2단계", async ({ page }) =>
   await expect(page.getByTestId("submit-modal")).toBeVisible();
   await page.getByTestId("submit-confirm").click();
   await expect(page.getByTestId("report-status")).toContainText("검수대기");
+
+  // 제출 후(view) 읽기 전용: 업무 추가/마감/마감취소 버튼이 노출되지 않아야 함
+  await expect(page.getByTestId("add-task")).toHaveCount(0);
+  await expect(page.locator('[data-testid^="mark-done-"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="reopen-"]')).toHaveCount(0);
 });
 
 test("빈 계획 제출 차단", async ({ page }) => {
@@ -55,4 +63,89 @@ test("빈 계획 제출 차단", async ({ page }) => {
   await expect(page.getByTestId("report-status")).toContainText(/작성중|미작성/);
   await page.getByTestId("primary-action").click();
   expect(dialogs.some((m) => m.includes("업무를 1개 이상"))).toBeTruthy();
+});
+
+test("업무 추가: 파일+URL 첨부 → 칩 표시, ⋯ 메뉴(수정/마감/삭제)로 삭제", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await login(page, "choi.minho");
+
+  await page.getByTestId("add-task").click();
+  await page.getByTestId("add-title").fill("첨부 테스트 업무");
+  // 파일 첨부
+  await page.getByTestId("task-file-pick").locator("input[type=file]").setInputFiles({ name: "스펙.txt", mimeType: "text/plain", buffer: Buffer.from("spec") });
+  await expect(page.getByTestId("task-pending-file")).toContainText("스펙.txt");
+  // URL 추가
+  await page.getByTestId("task-url-add").click();
+  await page.getByTestId("task-url-input").fill("https://example.com/spec");
+  await page.getByTestId("add-submit").click();
+
+  const row = page.getByTestId("task-row").filter({ hasText: "첨부 테스트 업무" });
+  await expect(row.getByTestId("task-att-chip")).toHaveCount(2, { timeout: 10000 });
+  await expect(row).toContainText("스펙.txt");
+  await expect(row).toContainText("https://example.com/spec");
+
+  // ⋯ 메뉴 드롭다운: 수정 / 마감 / 삭제
+  await row.getByTestId("task-menu").click();
+  await expect(page.getByTestId("task-menu-popover")).toBeVisible();
+  await expect(page.getByTestId("menu-edit")).toBeVisible();
+  await expect(page.getByTestId("menu-close")).toContainText("마감");
+  await page.getByTestId("menu-delete").click();
+  await expect(page.getByTestId("task-row").filter({ hasText: "첨부 테스트 업무" })).toHaveCount(0);
+});
+
+test("기존 업무에 행별 '＋첨부파일·코멘트'(통일 에디터)로 파일+URL 추가", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await login(page, "choi.minho");
+
+  // 첨부 없이 업무 추가
+  await page.getByTestId("add-task").click();
+  await page.getByTestId("add-title").fill("행첨부 테스트");
+  await page.getByTestId("add-submit").click();
+  const row = page.getByTestId("task-row").filter({ hasText: "행첨부 테스트" });
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId("task-att-chip")).toHaveCount(0);
+
+  // 행별 '＋ 첨부파일·코멘트' → 통일 에디터(자동 등록: 취소/첨부 버튼 없음)
+  await row.getByTestId("task-att-add").click();
+  await expect(row.getByTestId("attach-editor")).toBeVisible();
+  // 파일은 선택만으로 즉시 등록
+  await row.getByTestId("ae-file-pick").locator("input[type=file]").setInputFiles({ name: "근거.txt", mimeType: "text/plain", buffer: Buffer.from("ref") });
+  await expect(row.getByTestId("task-att-chip")).toHaveCount(1, { timeout: 10000 });
+  await expect(row).toContainText("근거.txt");
+  // URL은 입력 후 Enter만으로 즉시 등록
+  await row.getByTestId("ae-url-add").click();
+  await row.getByTestId("ae-url-input").fill("https://example.com/ref");
+  await row.getByTestId("ae-url-input").press("Enter");
+  await expect(row.getByTestId("task-att-chip")).toHaveCount(2, { timeout: 10000 });
+  await expect(row).toContainText("https://example.com/ref");
+});
+
+test("업무 설명: 추가 폼 입력 → 행 박스 표시(라벨 없음) → 더보기/접기 → ⋯ 수정", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await login(page, "choi.minho");
+
+  // 3줄 초과 긴 설명 → 더보기/접기 노출
+  const longDesc = Array.from({ length: 8 }, (_, i) => `설명 줄 ${i + 1} — 재시도 흐름 검증 포함`).join("\n");
+  await page.getByTestId("add-task").click();
+  await page.getByTestId("add-title").fill("설명 테스트 업무");
+  await page.getByTestId("add-desc").fill(longDesc);
+  await page.getByTestId("add-submit").click();
+
+  const row = page.getByTestId("task-row").filter({ hasText: "설명 테스트 업무" });
+  await expect(row.getByTestId("task-desc")).toBeVisible();
+  // 라벨 '업무 설명'은 제거됨
+  await expect(row.getByTestId("task-desc")).not.toContainText("업무 설명");
+  await expect(row.getByTestId("task-desc")).toContainText("재시도 흐름 검증");
+  // 더보기/접기 토글
+  await expect(row.getByTestId("desc-toggle")).toContainText("더보기");
+  await row.getByTestId("desc-toggle").click();
+  await expect(row.getByTestId("desc-toggle")).toContainText("접기");
+
+  // ⋯ 수정 → 기존 설명이 채워져 있고, 변경 후 저장하면 행에 반영
+  await row.getByTestId("task-menu").click();
+  await page.getByTestId("menu-edit").click();
+  await expect(page.getByTestId("edit-desc")).toHaveValue(/재시도 흐름 검증/);
+  await page.getByTestId("edit-desc").fill("수정된 설명 — 정산 정합성 체크 추가");
+  await page.getByTestId("edit-save").click();
+  await expect(row.getByTestId("task-desc")).toContainText("정산 정합성 체크 추가");
 });
