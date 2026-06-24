@@ -173,6 +173,13 @@ test("관리자: 프로필 페이지에서 '보고서 작성 대상' 토글 → 
   await page.goto("/admin/users");
   await page.getByTestId("admin-user-search").fill("정유나");
   await expect(page.getByTestId("admin-user-row").filter({ hasText: "정유나" })).toContainText("작성 제외");
+
+  // 원복(작성 대상 on) — 다른 스펙의 팀 현황 의존(정유나 표시) 보존
+  await page.getByTestId("admin-user-row").filter({ hasText: "정유나" }).getByRole("link", { name: "프로필" }).click();
+  await page.getByTestId("report-required-toggle").click();
+  const restored = page.waitForResponse((r) => r.url().includes("/api/admin/users/") && r.request().method() === "PATCH" && r.ok());
+  await page.getByTestId("profile-save").click();
+  await restored;
 });
 
 test("관리자: 사용자 추가 시 그룹장 역할 지정 → 그룹 메뉴에 그룹장으로 반영", async ({ page }) => {
@@ -202,4 +209,48 @@ test("관리자: 사용자 추가 시 그룹장 역할 지정 → 그룹 메뉴�
   // 3) 그룹 메뉴 → 리더검증팀의 그룹장이 신임리더로 반영
   await page.goto("/admin/groups");
   await expect(page.getByTestId("admin-group-card").filter({ hasText: "리더검증팀" }).getByTestId("group-leader-name")).toHaveText("신임리더");
+});
+
+test("작성 제외 사용자: 로그인 시 작성 화면으로 안 보냄 + 작성 페이지 안내(직접 작성은 가능)", async ({ page, browser }) => {
+  await login(page, "park.sora");
+  const base = new URL(page.url()).origin;
+
+  // 1) 직원 추가(소속 없음, 인증번호 2468)
+  await page.goto("/admin/users");
+  await page.getByTestId("add-user-open").click();
+  await page.getByTestId("user-name").fill("제외사원");
+  await page.getByTestId("user-loginid").fill("excl.member");
+  await page.getByTestId("user-group").selectOption("");
+  await page.getByTestId("user-code").fill("2468");
+  const created = page.waitForResponse((r) => r.url().endsWith("/api/admin/users") && r.request().method() === "POST" && r.ok());
+  await page.getByTestId("add-user-submit").click();
+  await created;
+
+  // 2) 프로필에서 '작성 대상' 끄기
+  await page.getByTestId("admin-user-search").fill("제외사원");
+  await page.getByTestId("admin-user-row").filter({ hasText: "제외사원" }).getByRole("link", { name: "프로필" }).click();
+  await expect(page).toHaveURL(/\/admin\/users\/\d+/);
+  await page.getByTestId("report-required-toggle").click();
+  const saved = page.waitForResponse((r) => /\/api\/admin\/users\/\d+$/.test(r.url()) && r.request().method() === "PATCH" && r.ok());
+  await page.getByTestId("profile-save").click();
+  await saved;
+
+  // 3) 격리 컨텍스트 로그인 → 작성(/report)이 아니라 목록(/reports)으로
+  const ctx = await browser.newContext({ baseURL: base });
+  const p = await ctx.newPage();
+  await p.goto("/login");
+  await p.locator("#login-id").fill("excl.member");
+  for (let i = 0; i < 4; i++) await p.getByLabel(`인증번호 ${i + 1}번째 자리`).fill("2468"[i]);
+  await p.getByRole("button", { name: "로그인" }).click();
+  await p.waitForURL(/\/reports$/, { timeout: 10000 });
+
+  // 4) 작성 페이지 직접 접근 시 자동 작성 화면이 아니라 안내
+  const today = await p.evaluate(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()));
+  await p.goto(`/report/${today}`);
+  await expect(p.getByTestId("not-report-target")).toBeVisible();
+
+  // 5) '그래도 작성하기' → 작성 에디터 진입
+  await p.getByTestId("write-anyway").click();
+  await expect(p.getByTestId("report-header")).toBeVisible();
+  await ctx.close();
 });

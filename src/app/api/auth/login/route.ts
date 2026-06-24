@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyOtp } from "@/lib/auth/service";
 import { createSession } from "@/lib/auth/session";
 import { rateLimit } from "@/lib/auth/ratelimit";
+import { getUserById } from "@/lib/data/users";
 import { todayKstISO } from "@/lib/date";
 
 export async function POST(req: Request) {
@@ -30,5 +31,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 401 });
   }
   await createSession(result.userId);
-  return NextResponse.json({ ok: true, redirect: `/report/${todayKstISO()}` });
+  // 작성 대상이 아니면 작성 화면으로 보내지 않음 — 검수자/관리자는 검수, 그 외는 목록으로.
+  const u = await getUserById(result.userId);
+  const redirect =
+    u && !u.report_required
+      ? u.role === "group_leader" || u.role === "admin"
+        ? "/review"
+        : "/reports"
+      : `/report/${todayKstISO()}`;
+  return NextResponse.json({ ok: true, redirect });
 }

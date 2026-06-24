@@ -20,7 +20,8 @@ export async function listScopeReports(opts: {
   date: string;
 }): Promise<MgrRow[]> {
   const params: unknown[] = [opts.date];
-  let where = "u.active";
+  // 작성 대상(report_required)만 — 비대상자는 '미작성' 현황에 표시하지 않음
+  let where = "u.active AND COALESCE(u.report_required, true)";
   if (opts.groupId != null) {
     params.push(opts.groupId);
     where += ` AND u.group_id = $${params.length}`;

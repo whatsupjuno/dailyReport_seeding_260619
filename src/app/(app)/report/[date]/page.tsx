@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth/guard";
 import {
   getOrCreateReport,
@@ -30,15 +31,34 @@ function isValidIsoDate(s: string): boolean {
   return !Number.isNaN(t);
 }
 
-export default async function ReportPage({ params }: { params: Promise<{ date: string }> }) {
+export default async function ReportPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ date: string }>;
+  searchParams: Promise<{ write?: string }>;
+}) {
   const { date } = await params;
+  const { write } = await searchParams;
   if (!isValidIsoDate(date)) notFound();
   const user = await requireUser();
 
   // 오늘 보고서만 자동 생성. 과거/타 날짜는 기존 것만 조회(임의 보고서 양산 방지)
   let reportId: number;
   if (date === todayKstISO()) {
-    reportId = await getOrCreateReport(user.id, date);
+    if (!user.report_required) {
+      // 작성 대상이 아니면 자동 생성하지 않음 — 기존 보고서가 있으면 그대로, 없으면 안내(원할 때만 ?write=1로 작성)
+      const existing = await getReportByUserDate(user.id, date);
+      if (existing) {
+        reportId = existing.id;
+      } else if (write === "1") {
+        reportId = await getOrCreateReport(user.id, date);
+      } else {
+        return <NotReportTargetNotice date={date} canReview={user.role === "group_leader" || user.role === "admin"} />;
+      }
+    } else {
+      reportId = await getOrCreateReport(user.id, date);
+    }
   } else {
     const existing = await getReportByUserDate(user.id, date);
     if (!existing) notFound();
@@ -136,4 +156,25 @@ export default async function ReportPage({ params }: { params: Promise<{ date: s
   };
 
   return <ReportEditor view={view} />;
+}
+
+/** 작성 대상이 아닌 사용자에게 작성 화면 대신 보여주는 안내(자동 보고서 생성 안 함). 원하면 직접 작성 가능. */
+function NotReportTargetNotice({ date, canReview }: { date: string; canReview: boolean }) {
+  const btn: React.CSSProperties = { height: 40, padding: "0 18px", borderRadius: 8, fontFamily: "inherit", fontSize: 14, fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center" };
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "64px 24px" }} data-testid="not-report-target">
+      <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 16, padding: "32px 28px", textAlign: "center", boxShadow: "0 1px 3px rgba(16,24,40,.08)" }}>
+        <div style={{ width: 52, height: 52, borderRadius: 9999, background: "#EEF2FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 24 }}>📋</div>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>작성 대상이 아닙니다</div>
+        <div style={{ fontSize: 14, color: "#6B7280", marginTop: 8, lineHeight: "21px" }}>
+          일일 업무 보고서 작성 대상이 아니에요. 작성 요청·미제출 독촉 안내를 보내지 않습니다.<br />
+          작성 대상 설정은 관리자가 변경할 수 있습니다.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
+          <Link href={canReview ? "/review" : "/reports"} style={{ ...btn, border: "none", background: "#3B5BDB", color: "#fff" }}>{canReview ? "검수로 이동" : "목록 보기"}</Link>
+          <Link href={`/report/${date}?write=1`} data-testid="write-anyway" style={{ ...btn, border: "1px solid #CBD0D9", background: "#fff", color: "#3A4150" }}>그래도 작성하기</Link>
+        </div>
+      </div>
+    </div>
+  );
 }
