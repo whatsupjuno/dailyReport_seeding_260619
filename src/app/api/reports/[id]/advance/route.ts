@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
 import { getReportOwnerId } from "@/lib/data/reports";
 import { advanceReport, type AdvanceInput } from "@/lib/data/report-mutations";
+import { getReviewOwner } from "@/lib/data/review";
+import { notifyLeaderReview } from "@/lib/mail/notify";
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await apiUser();
@@ -21,6 +23,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     const res = await advanceReport(reportId, body);
+    // 제출/재제출 → 그룹장에게 검수 요청 알림(반환값 기준). 1차 계획제출(submitted=false)·열람은 제외. best-effort
+    if (res.submitted === true && res.mode !== "view") {
+      const owner = await getReviewOwner(reportId);
+      if (owner) await notifyLeaderReview(owner, reportId, res.mode === "rejected" ? "resubmit_review" : "review_request");
+    }
     return NextResponse.json({ ok: true, ...res });
   } catch (e) {
     const m = (e as Error).message;

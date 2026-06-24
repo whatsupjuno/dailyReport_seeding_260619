@@ -54,6 +54,7 @@ export interface ReviewView {
   pending: boolean; // 검수대기(전체 승인/반려 가능)
   reviewable: boolean; // 계획제출 ∨ 검수대기(행 반려 가능)
   canAct: boolean; // 액션(승인/반려/행반려) 권한. false면 관리자 열람 전용 → 액션 UI 숨김
+  canPlanReject: boolean; // 계획 반려 가능(계획제출 + 그룹장, 셀프 제외)
   openRejectCount: number;
   heldTaskCount: number;
   model: 1 | 2;
@@ -64,7 +65,8 @@ export interface ReviewView {
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
 }
 
-const EVENT_LABEL: Record<string, string> = { submitted: "제출", rejected: "반려", resubmitted: "재제출", approved: "승인" };
+const EVENT_LABEL: Record<string, string> = { submitted: "제출", rejected: "반려", plan_rejected: "계획 반려", resubmitted: "재제출", approved: "승인" };
+const REJECT_KINDS = ["rejected", "plan_rejected"]; // 반려 계열(전역/계획) — 배너·이력·강조 공통 판정
 const REJECT_TEMPLATES = ["일정 누락", "근거 불충분", "완결 처리 오류", "커뮤니케이션 기록 누락", "내용 구체화 필요"];
 
 function timeOf(ts: string): string {
@@ -182,6 +184,8 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [comment, setComment] = useState("");
   const [target, setTarget] = useState("전체");
+  const [planRejectOpen, setPlanRejectOpen] = useState(false);
+  const [planComment, setPlanComment] = useState("");
   const [drawer, setDrawer] = useState<DrawerTask | null>(null);
   const [rowRejectId, setRowRejectId] = useState<number | null>(null);
   const [rowComment, setRowComment] = useState("");
@@ -234,6 +238,23 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
     }
   }
 
+  async function planReject() {
+    if (planComment.trim().length < 10) {
+      alert("계획 반려 사유를 10자 이상 입력해 주세요.");
+      return;
+    }
+    const ok = await call(`/api/reviews/${view.reportId}/plan-reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: planComment.trim() }),
+    });
+    if (ok) {
+      setPlanRejectOpen(false);
+      router.push("/review");
+      router.refresh();
+    }
+  }
+
   async function submitRowReject(taskId: number) {
     if (!rowComment.trim()) {
       alert("반려 사유를 입력해 주세요.");
@@ -267,7 +288,9 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
   const countSummary = `완결 ${cDone} · 지연 ${cDelay} · 미완 ${cIncomplete} · 전체 ${cTotal}`;
   const actionSummary = `완결 ${cDone} · 지연 ${cDelay} · 미완 ${cIncomplete}`;
   const evTime = (kind: string) => { const e = view.events.find((x) => x.kind === kind); return e ? timeOf(e.at) : null; };
-  const submitMeta = [evTime("submitted") && `최초제출 ${evTime("submitted")}`, evTime("rejected") && `반려 ${evTime("rejected")}`, evTime("resubmitted") && `재제출 ${evTime("resubmitted")}`].filter(Boolean).join(" · ");
+  const rejectEv = view.events.find((x) => REJECT_KINDS.includes(x.kind));
+  const rejectTime = rejectEv ? timeOf(rejectEv.at) : null;
+  const submitMeta = [evTime("submitted") && `최초제출 ${evTime("submitted")}`, rejectTime && `반려 ${rejectTime}`, evTime("resubmitted") && `재제출 ${evTime("resubmitted")}`].filter(Boolean).join(" · ");
 
   return (
     <div>
@@ -411,9 +434,9 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
             {view.events.length === 0 && <div style={{ fontSize: 13, color: "#9AA1AE" }}>이력이 없습니다.</div>}
             {view.events.map((e, i) => (
               <div key={i} style={{ display: "flex", gap: 10, paddingBottom: 12 }}>
-                <div style={{ width: 10, height: 10, borderRadius: 9999, marginTop: 4, background: e.kind === "rejected" ? "#DC2626" : e.kind === "approved" ? "#1F9254" : "#2563EB" }} />
+                <div style={{ width: 10, height: 10, borderRadius: 9999, marginTop: 4, background: REJECT_KINDS.includes(e.kind) ? "#DC2626" : e.kind === "approved" ? "#1F9254" : "#2563EB" }} />
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: e.kind === "rejected" ? "#DC2626" : "#1A1F2B" }}>{EVENT_LABEL[e.kind] ?? e.kind}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: REJECT_KINDS.includes(e.kind) ? "#DC2626" : "#1A1F2B" }}>{EVENT_LABEL[e.kind] ?? e.kind}</div>
                   <div style={{ fontSize: 12, color: "#9AA1AE" }} className="tnum">{timeOf(e.at)}{e.actorName ? ` · ${e.actorName}` : ""}</div>
                   {e.comment && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{e.rejectTarget ? `[${e.rejectTarget}] ` : ""}{e.comment}</div>}
                 </div>
@@ -467,11 +490,32 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
         <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,.94)", borderTop: "1px solid #E2E5EB", padding: "12px 24px" }} data-testid="plan-review-bar">
           <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#6B7280" }}>
             <span style={{ fontWeight: 600, color: "#3A4150" }}>계획 제출됨</span>
-            <span>개별 업무를 검토·반려할 수 있어요. 전체 승인/반려는 최종 제출 후 가능합니다.</span>
-            {view.openRejectCount > 0 && <span style={{ marginLeft: "auto", color: "#B91C1C", fontWeight: 600 }} data-testid="open-reject-count">행 반려 {view.openRejectCount}건</span>}
+            <span>개별 업무 반려 또는 계획 전체 반려가 가능합니다.</span>
+            {view.openRejectCount > 0 && <span style={{ color: "#B91C1C", fontWeight: 600 }} data-testid="open-reject-count">행 반려 {view.openRejectCount}건</span>}
+            {view.canPlanReject && (
+              <button onClick={() => { setPlanComment(""); setPlanRejectOpen(true); }} disabled={busy} data-testid="plan-reject-open" style={{ marginLeft: "auto", height: 38, padding: "0 18px", border: "1px solid #F5C2C2", borderRadius: 8, background: "#fff", color: "#DC2626", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>계획 반려</button>
+            )}
           </div>
         </div>
       ) : null}
+
+      {/* 계획 반려 모달 — 사유 ≥10자 필수 */}
+      {planRejectOpen && (
+        <div onClick={() => setPlanRejectOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 230, background: "rgba(16,24,40,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} data-testid="plan-reject-modal" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, padding: "20px 22px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>계획 반려</div>
+            <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 14, lineHeight: "19px" }}>제출된 계획 전체를 반려합니다(개별 업무 완료 여부와 무관). 작성자에게 사유가 전달돼요.</div>
+            <textarea value={planComment} onChange={(e) => setPlanComment(e.target.value.slice(0, 10000))} data-testid="plan-reject-reason" placeholder="계획을 반려하는 사유를 10자 이상 적어주세요." style={{ width: "100%", minHeight: 110, border: `1px solid ${planComment.trim().length > 0 && planComment.trim().length < 10 ? "#F5C2C2" : "#CBD0D9"}`, borderRadius: 8, padding: 12, fontFamily: "inherit", fontSize: 14, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+              <span style={{ fontSize: 12, color: planComment.trim().length < 10 ? "#DC2626" : "#9AA1AE" }}>{planComment.trim().length < 10 ? `${10 - planComment.trim().length}자 더 입력` : `${planComment.trim().length}자`}</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setPlanRejectOpen(false)} style={{ height: 40, padding: "0 16px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
+                <button onClick={planReject} disabled={busy || planComment.trim().length < 10} data-testid="plan-reject-submit" style={{ height: 40, padding: "0 18px", border: "none", borderRadius: 8, background: planComment.trim().length >= 10 ? "#DC2626" : "#E2E5EB", color: planComment.trim().length >= 10 ? "#fff" : "#9AA1AE", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: planComment.trim().length >= 10 ? "pointer" : "default" }}>계획 반려하기</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 전체/회신 반려 모달 */}
       {rejectOpen && (

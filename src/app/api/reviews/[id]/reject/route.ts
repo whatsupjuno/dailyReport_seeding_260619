@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
 import { authorizeReview, getReviewOwner, rejectReport } from "@/lib/data/review";
 import { getOpenTaskRejectCount } from "@/lib/data/task-rejections";
+import { notifyRejected } from "@/lib/mail/notify";
 
 const TARGETS = ["전체", "오전", "오후", "야간"];
 
@@ -27,6 +28,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     await rejectReport(reportId, user.id, comment, target);
+    // 반려 → 직원에게 알림(행 반려는 이 회신에 번들). best-effort
+    await notifyRejected(owner, reportId, comment);
     revalidatePath("/report/[date]", "page");
     revalidatePath("/reports");
     revalidatePath("/review");

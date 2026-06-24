@@ -144,6 +144,34 @@ export async function rejectReport(
   });
 }
 
+/** 계획제출 상태인지 잠금 후 확인 (계획 반려 전용 — 가드~함수 사이 상태변동 TOCTOU 차단) */
+async function assertPlanSubmitted(c: import("pg").PoolClient, reportId: number): Promise<void> {
+  const cur = await c.query<{ status: string }>(`SELECT status FROM daily_reports WHERE id=$1 FOR UPDATE`, [reportId]);
+  if (!cur.rows[0]) throw new Error("NOT_FOUND");
+  if (cur.rows[0].status !== "계획제출") throw new Error("NOT_PLAN_SUBMITTED");
+}
+
+/**
+ * 계획 반려(요청#1): 계획제출 단계 보고서 전체를 한 번에 반려(→'반려'). 그룹장의 1차 컨펌.
+ * 개별 업무 완료 여부와 무관하게 보고서 레벨 반려. 사유는 라우트에서 ≥10자 검증.
+ * 재제출은 기존 경로(반려→검수대기) 재사용(D1 단순안).
+ */
+export async function planRejectReport(reportId: number, reviewerId: number, comment: string): Promise<void> {
+  await tx(async (c) => {
+    await assertPlanSubmitted(c, reportId);
+    await c.query(`UPDATE daily_reports SET status='반려', updated_at=now() WHERE id=$1`, [reportId]);
+    const ev = await c.query<{ id: number }>(
+      `INSERT INTO report_events(report_id, kind, actor_user_id, comment) VALUES ($1,'plan_rejected',$2,$3) RETURNING id`,
+      [reportId, reviewerId, comment],
+    );
+    // 계획 단계 미해소 행 반려를 이 회차에 묶음(rejectReport와 동일 — undo 차단·타임라인 일관성)
+    await c.query(
+      `UPDATE task_rejections SET event_id=$2 WHERE report_id=$1 AND resolved_at IS NULL AND event_id IS NULL`,
+      [reportId, ev.rows[0].id],
+    );
+  });
+}
+
 export interface ReviewListItem {
   report_id: number;
   name: string;

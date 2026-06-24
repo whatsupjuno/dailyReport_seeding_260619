@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireReviewer } from "@/lib/auth/guard";
 import { parseId } from "@/lib/auth/api";
-import { authorizeReview, canViewReview, getReviewOwner, reviewQueueForReviewer } from "@/lib/data/review";
+import { authorizeReview, canReview, canViewReview, getReviewOwner, reviewQueueForReviewer } from "@/lib/data/review";
 import { loadFullReport, bucketedTasks, type TaskRow } from "@/lib/data/reports";
 import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachments";
 import { commentMetaForReport } from "@/lib/data/comments";
@@ -103,6 +103,8 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
     pending: full.report.status === "검수대기",
     reviewable: full.report.status === "검수대기" || full.report.status === "계획제출",
     canAct, // 액션(승인/반려/행반려) 권한. 관리자 열람전용이면 false → ReviewDetail 액션 숨김
+    // 계획 반려: 계획제출 단계 + 그룹장(셀프 제외). canReview(셀프 false)로 판정 → 본인 보고서엔 버튼 미노출.
+    canPlanReject: full.report.status === "계획제출" && String(owner.user_id) !== String(user.id) && canReview(user, owner),
     openRejectCount,
     heldTaskCount: full.tasks.length, // 휴가 보고서에 남아있는 업무 행 수(검수 카드 표시)
     queueNav,

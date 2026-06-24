@@ -639,7 +639,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
 
       <div style={{ maxWidth: 808, margin: "0 auto", padding: "24px 24px 120px" }}>
         {(() => {
-          const rejectComment = view.events.findLast((e) => e.kind === "rejected")?.comment;
+          const rejectComment = view.events.findLast((e) => e.kind === "rejected" || e.kind === "plan_rejected")?.comment;
           let banner: { icon: string; title: string; sub: string; bg: string; line: string; fg: string } | null = null;
           if (mode === "rejected")
             banner = { icon: "↩", title: "그룹장이 보고서를 반려했습니다.", sub: rejectComment ? `그룹장 코멘트: ${rejectComment}` : "반려된 업무만 수정·재마감한 뒤 다시 제출해 주세요.", bg: "#FCEBEB", line: "#F5C2C2", fg: "#B91C1C" };
