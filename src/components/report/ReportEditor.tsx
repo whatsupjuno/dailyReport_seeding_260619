@@ -139,6 +139,58 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   useEffect(() => setNoComm(view.noCommunication), [view.noCommunication]);
   useEffect(() => setVacationMode(view.isVacation || view.mode === "vacation"), [view.isVacation, view.mode]);
 
+  // '오늘 할 일' 드래그 재정렬 — 포인터 기반(마우스+터치 모두). 서버 갱신 시 로컬 오버라이드 폐기.
+  // 주의: task id는 bigint(런타임 문자열)이므로 모든 비교/키는 String으로 정규화한다.
+  const [localTodo, setLocalTodo] = useState<ReportTask[] | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const dragOrderRef = useRef<ReportTask[]>([]);
+  const todoRows = localTodo ?? view.todo;
+  useEffect(() => setLocalTodo(null), [view.todo]);
+  function startDrag(taskId: number | string, e: React.PointerEvent) {
+    e.preventDefault();
+    dragOrderRef.current = [...todoRows];
+    setLocalTodo([...todoRows]);
+    setDragId(String(taskId));
+  }
+  useEffect(() => {
+    if (dragId == null) return;
+    const onMove = (e: PointerEvent) => {
+      const el = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest("[data-todo-id]") as HTMLElement | null;
+      if (!el) return;
+      const overId = el.getAttribute("data-todo-id");
+      if (!overId || overId === dragId) return;
+      const cur = dragOrderRef.current;
+      const moved = cur.find((t) => String(t.id) === dragId);
+      if (!moved) return;
+      const rest = cur.filter((t) => String(t.id) !== dragId);
+      let at = rest.findIndex((t) => String(t.id) === overId);
+      if (at < 0) return;
+      if (e.clientY > el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2) at += 1;
+      const next = [...rest.slice(0, at), moved, ...rest.slice(at)];
+      if (next.map((t) => String(t.id)).join(",") !== cur.map((t) => String(t.id)).join(",")) {
+        dragOrderRef.current = next;
+        setLocalTodo(next);
+      }
+    };
+    const onUp = async () => {
+      const finalOrder = dragOrderRef.current;
+      setDragId(null);
+      if (finalOrder.map((t) => String(t.id)).join(",") === view.todo.map((t) => String(t.id)).join(",")) { setLocalTodo(null); return; }
+      try {
+        await fetch(`/api/reports/${view.reportId}/reorder`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskIds: finalOrder.map((t) => Number(t.id)) }) });
+        router.refresh();
+      } catch { setLocalTodo(null); }
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp, { once: true });
+    document.addEventListener("pointercancel", onUp, { once: true });
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+  }, [dragId, view.todo, view.reportId, router]);
+
   // 헤더 '마감까지' 카운트다운 — 클라이언트에서만(하이드레이션 안전). 마감 기준 18:00 KST(결정 #8).
   const [nowMs, setNowMs] = useState<number | null>(null);
   useEffect(() => {
@@ -650,8 +702,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
 
                 {/* 미완료 리스트 */}
                 <div style={{ marginTop: 8 }}>
-                  {view.todo.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
+                  {todoRows.map((t) => (
+                    <TaskRow key={t.id} t={t} busy={busy} reorderable={todoRows.length > 1} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
                   ))}
                   {view.todo.length === 0 && (
                     <div style={{ textAlign: "center", padding: "22px 0" }}>
@@ -1161,7 +1213,7 @@ function RejectBand({ comment }: { comment: string | null }) {
   );
 }
 
-function TaskRow({ t, busy, editable = true, rejectedMode = false, onMarkDone, onComment, onMenu, onDelete, attach }: { t: ReportTask; busy: boolean; editable?: boolean; rejectedMode?: boolean; onMarkDone: () => void; onComment: () => void; onMenu?: () => void; onDelete?: () => void; attach?: AttachProp }) {
+function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable = false, dragging = false, onDragStart, onMarkDone, onComment, onMenu, onDelete, attach }: { t: ReportTask; busy: boolean; editable?: boolean; rejectedMode?: boolean; reorderable?: boolean; dragging?: boolean; onDragStart?: (e: React.PointerEvent) => void; onMarkDone: () => void; onComment: () => void; onMenu?: () => void; onDelete?: () => void; attach?: AttachProp }) {
   const m = statusMeta(t.status);
   const rejected = t.rejectState === "반려";
   // editable=false(=view 읽기 전용)면 마감/⋯ 액션 숨김. 반려 모드는 editable=true로 전체 편집.
@@ -1170,8 +1222,13 @@ function TaskRow({ t, busy, editable = true, rejectedMode = false, onMarkDone, o
   // 제목/예정시간 아래 상세(설명·첨부·지연·반려·첨부에디터)는 전체폭 영역에 배치 → 박스 우측 끝이 ⋯ 버튼과 일치.
   const hasDetail = !!(t.description && t.description.trim()) || t.attachments.length > 0 || !!t.holdReason || rejected || !!attach;
   return (
-    <div data-testid="task-row" data-task-id={t.id} style={{ borderBottom: "1px solid #F2F3F6", boxShadow: rejected ? "inset 3px 0 0 #3B5BDB" : "none", paddingLeft: rejected ? 10 : 0 }}>
+    <div data-testid="task-row" data-task-id={t.id} data-todo-id={reorderable ? t.id : undefined} style={{ borderBottom: "1px solid #F2F3F6", boxShadow: rejected ? "inset 3px 0 0 #3B5BDB" : "none", paddingLeft: rejected ? 10 : 0, background: dragging ? "#F3F5FF" : "transparent" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: hasDetail ? "12px 0 0" : "12px 0" }}>
+        {reorderable && (
+          <button type="button" aria-label="순서 변경" data-testid={`drag-handle-${t.id}`} onPointerDown={onDragStart} style={{ flex: "none", width: 8, marginTop: 3, display: "flex", alignItems: "flex-start", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "grab", color: dragging ? "#3B5BDB" : "#C2C7D0", touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
+            <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="3" r="1.5" /><circle cx="9" cy="3" r="1.5" /><circle cx="3" cy="8" r="1.5" /><circle cx="9" cy="8" r="1.5" /><circle cx="3" cy="13" r="1.5" /><circle cx="9" cy="13" r="1.5" /></svg>
+          </button>
+        )}
         <div style={{ width: 20, height: 20, borderRadius: 9999, flex: "none", marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", border: `1.5px solid ${inProgress ? "#2563EB" : "#CBD0D9"}` }}>
           {inProgress && <span style={{ width: 8, height: 8, borderRadius: 9999, background: "#2563EB" }} />}
         </div>

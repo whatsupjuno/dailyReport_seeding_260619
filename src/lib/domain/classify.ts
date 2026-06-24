@@ -68,6 +68,6 @@ export function bucketTasks<T extends ClassifiableTask>(tasks: T[], nightOn: boo
   }
   am.sort((a, b) => completedMs(a) - completedMs(b));
   pm.sort((a, b) => completedMs(a) - completedMs(b));
-  todo.sort((a, b) => (a.status === "진행중" ? 0 : 1) - (b.status === "진행중" ? 0 : 1));
+  // '오늘 할 일'은 자동 정렬하지 않음 — 입력 배열 순서(= 쿼리 sort_order, id) = 사용자 지정 순서(드래그 재정렬)
   return { todo, am, pm, night };
 }

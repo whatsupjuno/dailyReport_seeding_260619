@@ -52,13 +52,13 @@ describe("classifyTask (디자인 classifyTasks 계승)", () => {
 });
 
 describe("bucketTasks", () => {
-  it("버킷 분류 + 정렬(오전/오후 완료시각 오름차순, todo 진행중 우선)", () => {
+  it("버킷 분류 + 정렬(오전/오후 완료시각 오름차순, todo는 입력 순서 유지=드래그 재정렬)", () => {
     const tasks = [
       task({ status: "완결", completed_at: at("2026-06-19T10:30:00+09:00"), is_night: false }), // am
       task({ status: "완결", completed_at: at("2026-06-19T09:00:00+09:00"), is_night: false }), // am (먼저)
       task({ status: "완결", completed_at: at("2026-06-19T15:00:00+09:00"), is_night: false }), // pm
-      task({ status: "계획", completed_at: null }), // todo
-      task({ status: "진행중", completed_at: null }), // todo (진행중 먼저)
+      task({ status: "계획", completed_at: null }), // todo (입력 1번째)
+      task({ status: "진행중", completed_at: null }), // todo (입력 2번째)
       task({ status: "완결", is_night: true, completed_at: at("2026-06-19T21:00:00+09:00") }), // night
     ];
     const b = bucketTasks(tasks, true);
@@ -67,7 +67,9 @@ describe("bucketTasks", () => {
     expect(b.pm).toHaveLength(1);
     expect(b.night).toHaveLength(1);
     expect(b.todo).toHaveLength(2);
-    expect(b.todo[0].status).toBe("진행중"); // 진행중 우선
+    // 자동 정렬 제거: 입력 순서 그대로(계획 → 진행중). 진행중 우선 정렬하지 않음.
+    expect(b.todo[0].status).toBe("계획");
+    expect(b.todo[1].status).toBe("진행중");
   });
   it("nightOn=false면 야간 task는 어디에도 안 들어감(숨김)", () => {
     const tasks = [task({ is_night: true, status: "완결", completed_at: at("2026-06-19T21:00:00+09:00") })];

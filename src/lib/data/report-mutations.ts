@@ -601,3 +601,18 @@ async function touch(c: PoolClient, reportId: number) {
     [reportId],
   );
 }
+
+/** '오늘 할 일' 드래그 재정렬 — 주어진 task id 순서대로 sort_order 부여. 작성 가능 상태에서만, 해당 보고서 task만(IDOR 방지). */
+export async function reorderTasks(reportId: number, taskIds: number[]): Promise<void> {
+  await tx(async (c) => {
+    const r = (await c.query<{ status: string }>(`SELECT status::text AS status FROM daily_reports WHERE id=$1 FOR UPDATE`, [reportId])).rows[0];
+    if (!r) throw new Error("NOT_FOUND");
+    if (!WORK_STATUSES.includes(r.status)) throw new Error("NOT_EDITABLE");
+    let order = 0;
+    for (const id of taskIds) {
+      // report_id 조건으로 타 보고서 task는 영향 없음(0행). order는 그대로 증가 → 유효 task의 상대 순서 보존.
+      await c.query(`UPDATE tasks SET sort_order=$2, updated_at=now() WHERE id=$1 AND report_id=$3`, [id, order, reportId]);
+      order++;
+    }
+  });
+}
