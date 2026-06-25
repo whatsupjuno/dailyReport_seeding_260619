@@ -5,4 +5,5 @@
 export PATH=/usr/bin:/bin
 export TZ=Asia/Seoul
 cd /opt/apps/seeding || exit 1
-/usr/bin/node node_modules/tsx/dist/cli.mjs scripts/dispatch.ts "$1" >> /var/log/seeding-dispatch.log 2>&1
+# $1=kind, $2=그룹(auto_submit 전용 sales|pd|ai) 또는 onlyEmail(테스트). 이메일 kind는 $2가 빈 문자열이면 전사 발송.
+/usr/bin/node node_modules/tsx/dist/cli.mjs scripts/dispatch.ts "$1" "$2" >> /var/log/seeding-dispatch.log 2>&1

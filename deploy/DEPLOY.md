@@ -14,11 +14,17 @@
 `deploy/cron-dispatch.sh` + 루트 crontab:
 ```
 CRON_TZ=Asia/Seoul
-30 8  * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh plan_invite       # 오늘 계획 안내
+30 8  * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh plan_invite       # 오늘 계획 안내(비-AI 그룹만)
 50 11 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh morning_close     # 오전 마감 안내
 50 17 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh afternoon_close   # 오후 마감 안내
 */10 20-22 * * 1-5 /opt/apps/seeding/deploy/cron-dispatch.sh submit_nag      # 미제출 독촉(10분 간격)
+# 그룹별 자동제출(마감 시각에 검수대기로 자동 전이). 2번째 인자=그룹 슬러그.
+0  20 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh auto_submit sales # Sales 20:00 자동제출
+30 21 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh auto_submit pd    # Product Design 21:30 자동제출
+0  9  * * *      /opt/apps/seeding/deploy/cron-dispatch.sh auto_submit ai    # AI Agent 매일 09:00(어제 윈도우)
 ```
+> 자동제출은 `groups.submit_due`가 NULL이면 cron 줄이 있어도 스킵(정책 = DB 단일 진실원천). AI는 09:00 이전 호출 방어.
+> AI 그룹은 자체 API·09:00 슬롯으로 자기관리하므로 plan_invite/마감안내/독촉 전사 이메일에서 제외된다.
 > ⚠️ crontab은 **레포에 포함된 `deploy/cron-dispatch.sh`** 경로를 써야 함. (루트 `/opt/apps/seeding/cron-dispatch.sh`는 레포에 없어 `rsync --delete` 동기화 시 삭제되어 cron이 전부 실패했던 이력 있음 — 2026-06.)
 로그: `/var/log/seeding-dispatch.log`. 각 발송은 당일 보고서를 보장하고 `notifications`에 기록.
 
