@@ -14,7 +14,7 @@
 `deploy/cron-dispatch.sh` + 루트 crontab:
 ```
 CRON_TZ=Asia/Seoul
-30 8  * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh plan_invite       # 오늘 계획 안내(비-AI 그룹만)
+*/5 6-22 * * *   /opt/apps/seeding/deploy/cron-dispatch.sh plan_invite_tick  # 그룹별 작성요청 메일(groups.invite_at 시각·평일/AI매일)
 50 11 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh morning_close     # 오전 마감 안내
 50 17 * * 1-5    /opt/apps/seeding/deploy/cron-dispatch.sh afternoon_close   # 오후 마감 안내
 */10 20-22 * * 1-5 /opt/apps/seeding/deploy/cron-dispatch.sh submit_nag      # 미제출 독촉(10분 간격)

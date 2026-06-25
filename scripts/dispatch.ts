@@ -13,8 +13,8 @@ import { isWeekdayKst } from "../src/lib/date";
 // submit_nag(미제출 독촉): 20:00 이후, '야간 업무 없음'인데 아직 제출하지 않은 사용자에게만 발송.
 //   cron이 5분 간격으로 호출하며, 사용자당 당일 최대 30회까지(이미 30회면 스킵). 제출/야간있음이면 제외.
 
-type Kind = "plan_invite" | "morning_close" | "afternoon_close" | "night_close" | "reminder" | "submit_nag" | "auto_submit";
-const VALID: Kind[] = ["plan_invite", "morning_close", "afternoon_close", "night_close", "reminder", "submit_nag", "auto_submit"];
+type Kind = "plan_invite" | "plan_invite_tick" | "morning_close" | "afternoon_close" | "night_close" | "reminder" | "submit_nag" | "auto_submit";
+const VALID: Kind[] = ["plan_invite", "plan_invite_tick", "morning_close", "afternoon_close", "night_close", "reminder", "submit_nag", "auto_submit"];
 
 // 그룹 슬러그 → groups.name. 정확한 그룹명을 직접 넘겨도 됨.
 const GROUP_BY_SLUG: Record<string, string> = { sales: "Sales", pd: "Product Design", ai: "AI Agent" };
@@ -42,6 +42,13 @@ function kstHour(): number {
   return Number(
     new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", hour: "2-digit", hour12: false }).format(new Date()),
   );
+}
+
+/** 현재 KST '하루 중 분'(0~1439). 그룹별 invite_at 도래 판정용. */
+function kstMinuteOfDay(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+  const [h, m] = parts.split(":").map(Number);
+  return h * 60 + m;
 }
 
 async function main() {
@@ -93,6 +100,72 @@ async function main() {
       else skipped++;
     }
     console.log(`[auto_submit:${groupName}] ${targetDate} submitted=${submitted} skipped=${skipped}`);
+    await c.end();
+    return;
+  }
+
+  // ── 작성 요청 메일 폴링(plan_invite_tick) ── cron이 매 N분 호출. 그룹 invite_at가 당일 도래했고 아직 미발송인 작성대상에게 발송.
+  // invite_at은 스냅샷하지 않고 매 틱마다 그룹 '현재값'을 live로 평가 → 발송 시각 변경 시:
+  //   · 오늘 아직 미발송이면(시각 변경 시점에 미발송) 새 시각 기준으로 그날 바로 적용,
+  //   · 오늘 이미 발송했으면 report별 plan_invite 멱등으로 오늘은 재발송 안 하고 다음 날부터 새 시각 적용.
+  if (kind === "plan_invite_tick") {
+    const today = todayKstISO();
+    const link = (process.env.APP_BASE_URL ?? "http://localhost:3000") + "/login";
+    const nowMin = kstMinuteOfDay();
+    const weekday = isWeekdayKst(today);
+    const groups = (
+      await c.query<{ id: number; name: string; is_ai_group: boolean; invite_min: number }>(
+        `SELECT id, name, is_ai_group,
+                (EXTRACT(HOUR FROM invite_at)*60 + EXTRACT(MINUTE FROM invite_at))::int AS invite_min
+           FROM groups WHERE invite_at IS NOT NULL ORDER BY id`,
+      )
+    ).rows;
+    let sent = 0;
+    let failed = 0;
+    let skipped = 0;
+    for (const g of groups) {
+      if (nowMin < Number(g.invite_min)) continue; // 아직 발송 시각 전
+      if (!g.is_ai_group && !weekday) continue; // 비-AI 그룹은 평일만
+      const users = (
+        await c.query<{ id: number; name: string; email: string }>(
+          `SELECT id, name, email FROM users WHERE group_id=$1 AND active AND COALESCE(report_required,true) ORDER BY id`,
+          [g.id],
+        )
+      ).rows;
+      for (const u of users) {
+        let rid = (await c.query<{ id: number }>(`SELECT id FROM daily_reports WHERE user_id=$1 AND report_date=$2`, [u.id, today])).rows[0]?.id;
+        if (!rid) {
+          const v2 = isV2Date(today);
+          rid = (
+            await c.query<{ id: number }>(
+              `INSERT INTO daily_reports(user_id, report_date, status, model_version,
+                 win_snapshotted, win_is_ai, win_write_start, win_write_end, win_submit_due)
+               SELECT $1,$2,'작성중',$3, true,
+                      COALESCE(gx.is_ai_group,false), COALESCE(gx.write_start,'00:00'), COALESCE(gx.write_end,'23:59'), gx.submit_due
+                 FROM users ux LEFT JOIN groups gx ON gx.id=ux.group_id WHERE ux.id=$1 RETURNING id`,
+              [u.id, today, v2 ? 2 : 1],
+            )
+          ).rows[0].id;
+          if (!v2) await c.query(`INSERT INTO report_sections(report_id, kind, status) VALUES ($1,'plan','작성중')`, [rid]);
+        }
+        // 오늘 이미 작성요청 발송했으면 스킵(report별 1회 — sent/failed 무관하게 멱등)
+        if ((await c.query(`SELECT 1 FROM notifications WHERE report_id=$1 AND kind='plan_invite'`, [rid])).rows[0]) {
+          skipped++;
+          continue;
+        }
+        const msg = reportInviteEmail(u.email, u.name, "plan_invite", link);
+        const res = await mailer().send(msg);
+        await c.query(
+          `INSERT INTO notifications(user_id, report_id, kind, subject, status, provider_id, sent_at, error)
+           VALUES ($1,$2,'plan_invite',$3,$4,$5,now(),$6)`,
+          [u.id, rid, msg.subject, res.ok ? "sent" : "failed", res.id || null, res.error ?? null],
+        );
+        if (res.ok) sent++;
+        else failed++;
+        console.log(`${res.ok ? "OK  " : "FAIL"} [invite:${g.name}] ${u.email}${res.error ? " :: " + res.error : ""}`);
+      }
+    }
+    console.log(`[plan_invite_tick] ${today} ${nowMin}분 — sent=${sent} failed=${failed} skipped=${skipped} (transport=${mailer().name})`);
     await c.end();
     return;
   }

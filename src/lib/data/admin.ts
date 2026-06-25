@@ -22,16 +22,18 @@ export interface GroupWithMembers {
   write_start: string; // 'HH:MM'
   write_end: string; // 'HH:MM'
   submit_due: string | null; // 'HH:MM' 자동제출, null=OFF
+  invite_at: string | null; // 'HH:MM' 작성요청 메일 발송, null=OFF
   members: Array<{ id: number; name: string }>;
 }
 
 export async function listGroupsWithMembers(): Promise<GroupWithMembers[]> {
-  const groups = await query<{ id: number; name: string; leader_id: number | null; leader_name: string | null; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null }>(
+  const groups = await query<{ id: number; name: string; leader_id: number | null; leader_name: string | null; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; invite_at: string | null }>(
     `SELECT g.id, g.name, g.leader_user_id AS leader_id, l.name AS leader_name,
             g.is_ai_group,
             to_char(g.write_start,'HH24:MI') AS write_start,
             to_char(g.write_end,'HH24:MI') AS write_end,
-            to_char(g.submit_due,'HH24:MI') AS submit_due
+            to_char(g.submit_due,'HH24:MI') AS submit_due,
+            to_char(g.invite_at,'HH24:MI') AS invite_at
        FROM groups g LEFT JOIN users l ON l.id = g.leader_user_id
       ORDER BY g.id`,
   );
@@ -86,12 +88,13 @@ export async function listGroupOptions(): Promise<Array<{ id: number; name: stri
 
 // ===== 그룹 관리(생성/수정/삭제 + 구성원) =====
 
-/** 그룹 시간정책 입력(작성창·자동제출·AI그룹). 'HH:MM' 문자열. submitDue 빈값/null = 자동제출 OFF. */
+/** 그룹 시간정책 입력(작성창·자동제출·작성요청메일·AI그룹). 'HH:MM' 문자열. submitDue/inviteAt 빈값/null = 해당 발송 OFF. */
 export interface GroupPolicyInput {
   isAi?: boolean;
   writeStart?: string | null;
   writeEnd?: string | null;
   submitDue?: string | null;
+  inviteAt?: string | null; // 작성 요청 메일 발송 시각. NULL=발송 안 함. live 평가(변경 즉시 당일 반영).
 }
 
 /** 그룹 생성. 이름은 중복 불가(대소문자 무시). AI그룹 토글·시간정책 포함. */
@@ -101,9 +104,9 @@ export async function createGroup(input: { name: string; leaderId?: number | nul
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1)`, [name]);
   if (dup) throw new Error("DUPLICATE_NAME");
   const r = await queryOne<{ id: number }>(
-    `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [name, input.leaderId ?? null, !!input.isAi, input.writeStart || "00:00", input.writeEnd || "23:59", input.submitDue || null],
+    `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due, invite_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [name, input.leaderId ?? null, !!input.isAi, input.writeStart || "00:00", input.writeEnd || "23:59", input.submitDue || null, input.inviteAt || null],
   );
   return { id: r!.id };
 }
@@ -115,13 +118,13 @@ export async function createGroup(input: { name: string; leaderId?: number | nul
 export async function updateGroup(
   id: number,
   input: { name: string; leaderId: number | null } & GroupPolicyInput,
-): Promise<{ policyChanged: boolean; window: { isAi: boolean; writeStart: string; writeEnd: string; submitDue: string | null } }> {
+): Promise<{ policyChanged: boolean; window: { isAi: boolean; writeStart: string; writeEnd: string; submitDue: string | null; inviteAt: string | null } }> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
-  const cur = await queryOne<{ id: number; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null }>(
+  const cur = await queryOne<{ id: number; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; invite_at: string | null }>(
     `SELECT id, is_ai_group,
             to_char(write_start,'HH24:MI') AS write_start, to_char(write_end,'HH24:MI') AS write_end,
-            to_char(submit_due,'HH24:MI') AS submit_due
+            to_char(submit_due,'HH24:MI') AS submit_due, to_char(invite_at,'HH24:MI') AS invite_at
        FROM groups WHERE id=$1`,
     [id],
   );
@@ -138,16 +141,18 @@ export async function updateGroup(
   const writeStart = input.writeStart || cur.write_start;
   const writeEnd = input.writeEnd || cur.write_end;
   const submitDue = input.submitDue === undefined ? cur.submit_due : input.submitDue || null;
+  const inviteAt = input.inviteAt === undefined ? cur.invite_at : input.inviteAt || null;
   await query(
-    `UPDATE groups SET name=$2, leader_user_id=$3, is_ai_group=$4, write_start=$5, write_end=$6, submit_due=$7 WHERE id=$1`,
-    [id, name, input.leaderId, isAi, writeStart, writeEnd, submitDue],
+    `UPDATE groups SET name=$2, leader_user_id=$3, is_ai_group=$4, write_start=$5, write_end=$6, submit_due=$7, invite_at=$8 WHERE id=$1`,
+    [id, name, input.leaderId, isAi, writeStart, writeEnd, submitDue, inviteAt],
   );
   const policyChanged =
     isAi !== cur.is_ai_group ||
     writeStart !== cur.write_start ||
     writeEnd !== cur.write_end ||
-    (submitDue ?? null) !== (cur.submit_due ?? null);
-  return { policyChanged, window: { isAi, writeStart, writeEnd, submitDue: submitDue ?? null } };
+    (submitDue ?? null) !== (cur.submit_due ?? null) ||
+    (inviteAt ?? null) !== (cur.invite_at ?? null);
+  return { policyChanged, window: { isAi, writeStart, writeEnd, submitDue: submitDue ?? null, inviteAt: inviteAt ?? null } };
 }
 
 /** 그룹 삭제. 구성원의 group_id와 그룹장 FK는 ON DELETE SET NULL로 자동 해제. */

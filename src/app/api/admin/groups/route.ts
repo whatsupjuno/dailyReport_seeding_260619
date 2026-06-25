@@ -8,12 +8,13 @@ export async function POST(req: Request) {
   if (!user) return unauthorized();
   if (user.role !== "admin") return forbidden();
 
-  const body = (await req.json().catch(() => ({}))) as { name?: string; leaderId?: number | null; isAi?: boolean; writeStart?: string; writeEnd?: string; submitDue?: string | null };
+  const body = (await req.json().catch(() => ({}))) as { name?: string; leaderId?: number | null; isAi?: boolean; writeStart?: string; writeEnd?: string; submitDue?: string | null; inviteAt?: string | null };
   if (!body.name?.trim()) return badRequest("그룹명을 입력해 주세요.");
   const HM = /^([01]?\d|2[0-3]):[0-5]\d$/;
   if (body.writeStart && !HM.test(body.writeStart)) return badRequest("작성 시작 시각 형식이 올바르지 않습니다.");
   if (body.writeEnd && !HM.test(body.writeEnd)) return badRequest("작성 종료 시각 형식이 올바르지 않습니다.");
   if (body.submitDue && !HM.test(body.submitDue)) return badRequest("자동제출 시각 형식이 올바르지 않습니다.");
+  if (body.inviteAt && !HM.test(body.inviteAt)) return badRequest("작성 요청 메일 시각 형식이 올바르지 않습니다.");
 
   try {
     const res = await createGroup({
@@ -23,6 +24,7 @@ export async function POST(req: Request) {
       writeStart: body.writeStart,
       writeEnd: body.writeEnd,
       submitDue: body.submitDue ?? null,
+      inviteAt: body.inviteAt ?? null,
     });
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {
