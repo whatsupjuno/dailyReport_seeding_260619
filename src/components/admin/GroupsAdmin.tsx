@@ -157,9 +157,9 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", margin: "14px 0 6px" }}>그룹장</label>
             <select value={eLeader} onChange={(e) => setELeader(e.target.value)} data-testid="group-edit-leader" style={{ ...inp, cursor: "pointer" }}>
               <option value="">미지정</option>
-              {editGroup.members.map((m) => <option key={m.id} value={String(m.id)}>{m.name}</option>)}
+              {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
             </select>
-            <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: 8 }}>그룹장은 이 그룹의 구성원 중에서만 지정할 수 있습니다.</div>
+            <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: 8 }}>활성 사용자 누구나 지정할 수 있어요(구성원 아니어도 가능). 한 사람이 여러 그룹의 그룹장을 맡을 수 있습니다.</div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={() => setEditId(null)} style={{ height: 40, padding: "0 16px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
               <button onClick={saveEdit} disabled={busy} data-testid="group-edit-save" style={{ height: 40, padding: "0 20px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>저장</button>

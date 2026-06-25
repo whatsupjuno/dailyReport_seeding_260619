@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/guard";
-import { listMyReports, listScopeReports, listScopeReportsByStatus, type MgrRow } from "@/lib/data/list";
+import { listMyReports, listScopeReports, listScopeReportsByStatus, listLedGroupIds, type MgrRow } from "@/lib/data/list";
 import { listGroupOptions } from "@/lib/data/admin";
 import { userHasOtherReviewer } from "@/lib/data/review";
 import FilterBar from "./FilterBar";
@@ -43,11 +43,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
   const tab = sp.tab ?? "all";
 
   if (isManager) {
-    const groupFilter = user.role === "admin" ? (sp.group ? Number(sp.group) : null) : user.group_id;
+    // admin: 전체(또는 필터). group_leader: 자신이 그룹장인 모든 그룹(복수 그룹장 지원).
+    const groupIds = user.role === "admin" ? (sp.group ? [Number(sp.group)] : null) : await listLedGroupIds(user.id);
     const groups = user.role === "admin" ? await listGroupOptions() : [];
-    const all = await listScopeReports({ groupId: groupFilter, date });
+    const all = await listScopeReports({ groupIds, date });
     // '승인' 탭은 날짜 무관(최근 누적) — 과거에 검수 완료(승인)한 보고서도 목록에서 볼 수 있게.
-    const approvedAll = await listScopeReportsByStatus({ groupId: groupFilter, statuses: ["승인"], limit: 300 });
+    const approvedAll = await listScopeReportsByStatus({ groupIds, statuses: ["승인"], limit: 300 });
     const isApprovedView = tab === "approved";
     // 본인 행: 위/동급 검수자가 없으면(최상위) 본인 보고서를 직접 검수(셀프 승인) 가능 → '검수' 노출. 아니면 '보기'(내 보고서 편집).
     const selfReviewAllowed = !(await userHasOtherReviewer({ id: user.id, group_id: user.group_id }));

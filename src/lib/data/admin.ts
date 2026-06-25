@@ -91,7 +91,7 @@ export async function createGroup(input: { name: string; leaderId?: number | nul
   return { id: r!.id };
 }
 
-/** 그룹 정보 수정(이름·그룹장). 그룹장은 반드시 해당 그룹 소속이어야 함(미지정 허용). */
+/** 그룹 정보 수정(이름·그룹장). 그룹장은 활성 사용자면 누구나(구성원 아니어도) — 한 사람이 복수 그룹장 가능. 미지정 허용. */
 export async function updateGroup(id: number, input: { name: string; leaderId: number | null }): Promise<void> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
@@ -99,9 +99,10 @@ export async function updateGroup(id: number, input: { name: string; leaderId: n
   if (!cur) throw new Error("NOT_FOUND");
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1) AND id<>$2`, [name, id]);
   if (dup) throw new Error("DUPLICATE_NAME");
+  // 그룹장은 활성 사용자면 누구나 지정 가능(구성원 아니어도). 한 사람이 여러 그룹의 그룹장을 맡을 수 있음.
   if (input.leaderId != null) {
-    const m = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1 AND group_id=$2`, [input.leaderId, id]);
-    if (!m) throw new Error("LEADER_NOT_MEMBER");
+    const m = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1 AND active`, [input.leaderId]);
+    if (!m) throw new Error("LEADER_NOT_ACTIVE");
   }
   await query(`UPDATE groups SET name=$2, leader_user_id=$3 WHERE id=$1`, [id, name, input.leaderId]);
 }
@@ -113,13 +114,12 @@ export async function deleteGroup(id: number): Promise<void> {
   await query(`DELETE FROM groups WHERE id=$1`, [id]);
 }
 
-/** 구성원 추가(이동). 다른 그룹의 그룹장이었다면 그 그룹의 그룹장직은 해제(유령 그룹장 방지). */
+/** 구성원 추가(소속 이동). 그룹장직은 소속과 독립 — 다른 그룹의 그룹장직은 건드리지 않음(복수 그룹장 지원). */
 export async function addGroupMember(groupId: number, userId: number): Promise<void> {
   const g = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE id=$1`, [groupId]);
   if (!g) throw new Error("GROUP_NOT_FOUND");
   const u = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1`, [userId]);
   if (!u) throw new Error("USER_NOT_FOUND");
-  await query(`UPDATE groups SET leader_user_id=NULL WHERE leader_user_id=$1 AND id<>$2`, [userId, groupId]);
   await query(`UPDATE users SET group_id=$2 WHERE id=$1`, [userId, groupId]);
 }
 
@@ -155,14 +155,13 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<vo
       [id, input.name.trim(), input.role, input.groupId, input.active, input.reportRequired ?? null, input.loginCode ?? null, input.email?.trim() ?? null],
     );
 
-    // 그룹장 실체(groups.leader_user_id) 동기화 — role/소속과 어긋난 '유령 그룹장' 방지.
-    // 1) 자신이 속한 그룹 외의 모든 그룹장직 해제(무소속이면 전부 해제 — id IS DISTINCT FROM NULL = 모두 참)
-    await c.query(`UPDATE groups SET leader_user_id=NULL WHERE leader_user_id=$1 AND id IS DISTINCT FROM $2`, [id, input.groupId]);
+    // 그룹장 실체(groups.leader_user_id) 동기화 — 그룹장직은 소속과 독립(복수 그룹장 지원).
+    // 다른 그룹의 그룹장직은 건드리지 않는다. 단:
     if (input.role === "employee") {
-      // 2) 직원은 현재 그룹도 이끌 수 없음 → 남은 그룹장직 해제
+      // 직원으로 강등되면 어느 그룹도 이끌 수 없음 → 맡고 있던 그룹장직 전부 해제
       await c.query(`UPDATE groups SET leader_user_id=NULL WHERE leader_user_id=$1`, [id]);
     } else if (input.role === "group_leader" && input.groupId != null) {
-      // 3) 그룹장이면 현재 그룹에 활성 그룹장이 없을 때만 본인을 지정(기존 활성 그룹장은 교체하지 않음 — 교체는 '그룹 관리'에서)
+      // 그룹장이면 자기 소속 그룹에 활성 그룹장이 없을 때만 본인을 지정(편의 — 추가 그룹은 '그룹 관리'에서)
       await c.query(
         `UPDATE groups g SET leader_user_id = $1
            WHERE g.id = $2

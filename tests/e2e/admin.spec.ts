@@ -282,3 +282,28 @@ test("이메일 정책: 아이디가 이메일이면 그대로(이중 @ 방지) 
   const res = await page.request.post("/api/admin/users", { data: { name: "x", loginId: "bad.email.user", email: "not-an-email" } });
   expect(res.status()).toBe(400);
 });
+
+test("복수 그룹장: 한 사람을 여러 그룹의 그룹장으로 지정(기존 그룹장직 유지)", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await login(page, "park.sora");
+  await page.goto("/admin/groups");
+
+  // 그룹장 없는 새 그룹 생성
+  await page.getByTestId("add-group-open").click();
+  await page.getByTestId("group-name").fill("복수검증팀");
+  const created = page.waitForResponse((r) => r.url().endsWith("/api/admin/groups") && r.request().method() === "POST" && r.ok());
+  await page.getByTestId("group-create-submit").click();
+  await created;
+
+  // 복수검증팀 그룹장을 김도윤(개발팀 그룹장 겸 비구성원)으로 지정 — 활성 사용자 누구나 가능
+  const card = page.getByTestId("admin-group-card").filter({ hasText: "복수검증팀" });
+  await card.getByRole("button", { name: "수정" }).click();
+  await page.getByTestId("group-edit-leader").selectOption({ label: "김도윤" });
+  const saved = page.waitForResponse((r) => /\/api\/admin\/groups\/\d+$/.test(r.url()) && r.request().method() === "PATCH" && r.ok());
+  await page.getByTestId("group-edit-save").click();
+  await saved;
+
+  // 복수검증팀·개발팀 둘 다 김도윤이 그룹장 — 개발팀 그룹장직이 해제되지 않음(복수 그룹장)
+  await expect(page.getByTestId("admin-group-card").filter({ hasText: "복수검증팀" }).getByTestId("group-leader-name")).toHaveText("김도윤");
+  await expect(page.getByTestId("admin-group-card").filter({ hasText: "개발팀" }).getByTestId("group-leader-name")).toHaveText("김도윤");
+});
