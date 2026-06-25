@@ -65,9 +65,13 @@ async function main() {
     const slug = (process.argv[3] ?? "").toLowerCase();
     const groupName = GROUP_BY_SLUG[slug] ?? process.argv[3];
     if (!groupName) throw new Error("auto_submit는 그룹 인자 필요: sales|pd|ai|<그룹명>");
-    const g = (await c.query<{ id: number; is_ai_group: boolean }>(`SELECT id, is_ai_group FROM groups WHERE name=$1`, [groupName])).rows[0];
+    const g = (await c.query<{ id: number; is_ai_group: boolean; submit_due: string | null }>(`SELECT id, is_ai_group, submit_due FROM groups WHERE name=$1`, [groupName])).rows[0];
     if (!g) { console.log(`[auto_submit] 그룹 없음: ${groupName}`); await c.end(); return; }
-    // AI는 09:00에 '어제 시작분' 윈도우(전날 09:00~당일 08:59)를 닫음. 비-AI는 오늘분(평일만, 주말 방어).
+    // 자동제출 OFF(submit_due NULL)면 cron 줄이 남아 있어도 발송 안 함(정책 단일 진실원천 = groups.submit_due).
+    if (g.submit_due == null) { console.log(`[auto_submit:${groupName}] 자동제출 OFF(submit_due 없음) — 스킵`); await c.end(); return; }
+    // AI는 09:00에 '어제 시작분' 윈도우(전날 09:00~당일 08:59)를 닫음 — 09:00 이전 호출은 아직 진행 중인 윈도우라 방어.
+    if (g.is_ai_group && kstHour() < 9) { console.log(`[auto_submit:${groupName}] 09:00 이전(${kstHour()}시) — 스킵`); await c.end(); return; }
+    // 비-AI는 오늘분(평일만, 주말 방어).
     const targetDate = g.is_ai_group ? kstDateOffset(-1) : kstDateOffset(0);
     if (!g.is_ai_group && !isWeekdayKst(targetDate)) {
       console.log(`[auto_submit:${groupName}] ${targetDate} 주말 — 스킵`);

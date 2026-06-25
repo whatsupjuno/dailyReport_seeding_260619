@@ -716,7 +716,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 {/* 미완료 리스트 */}
                 <div style={{ marginTop: 8 }}>
                   {todoRows.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} reorderable={todoRows.length > 1} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
+                    <TaskRow key={t.id} t={t} busy={busy} reorderable={todoRows.length > 1 && !reviewMode} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
                   ))}
                   {view.todo.length === 0 && (
                     <div style={{ textAlign: "center", padding: "22px 0" }}>

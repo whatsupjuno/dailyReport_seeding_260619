@@ -59,13 +59,14 @@ export interface ReviewView {
   heldTaskCount: number;
   model: 1 | 2;
   queueNav: { position: string | null; prevId: number | null; nextId: number | null };
-  buckets?: { todo: ReviewTask[]; am: ReviewTask[]; pm: ReviewTask[]; night: ReviewTask[] };
+  isAi: boolean; // AI 그룹: 오전/오후/야간 대신 24시간 단일 완료 타임라인
+  buckets?: { todo: ReviewTask[]; am: ReviewTask[]; pm: ReviewTask[]; night: ReviewTask[]; aiDone: ReviewTask[] };
   sections?: ReviewSection[];
   comms: Array<{ type: string; counterpart: string; time: string | null; summary: string; attachments: Array<{ id: number; fileName: string | null; url: string | null; comment: string | null }> }>;
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
 }
 
-const EVENT_LABEL: Record<string, string> = { submitted: "제출", rejected: "반려", plan_rejected: "계획 반려", resubmitted: "재제출", approved: "승인" };
+const EVENT_LABEL: Record<string, string> = { submitted: "제출", auto_submitted: "자동제출", rejected: "반려", plan_rejected: "계획 반려", resubmitted: "재제출", approved: "승인" };
 const REJECT_KINDS = ["rejected", "plan_rejected"]; // 반려 계열(전역/계획) — 배너·이력·강조 공통 판정
 const REJECT_TEMPLATES = ["일정 누락", "근거 불충분", "완결 처리 오류", "커뮤니케이션 기록 누락", "내용 구체화 필요"];
 
@@ -360,12 +361,19 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
                 </div>
               )}
               {view.model === 2 && view.buckets ? (
-                <>
-                  <ReviewBucket testid="review-bucket-todo" name="미완료 · 진행 중" range="" tasks={view.buckets.todo} zone="오늘 할 일" ctx={ctx} />
-                  <ReviewBucket testid="review-bucket-am" name="오전 계획·마감" range="08:30 ~ 11:50" tasks={view.buckets.am} zone="오전" ctx={ctx} />
-                  <ReviewBucket testid="review-bucket-pm" name="오후 마감" range="11:50 ~ 17:50" tasks={view.buckets.pm} zone="오후" ctx={ctx} />
-                  <ReviewBucket testid="review-bucket-night" name="🌙 야간" range="20:00 ~" tasks={view.buckets.night} zone="야간" ctx={ctx} />
-                </>
+                view.isAi ? (
+                  <>
+                    <ReviewBucket testid="review-bucket-todo" name="미완료 · 진행 중" range="" tasks={view.buckets.todo} zone="오늘 할 일" ctx={ctx} />
+                    <ReviewBucket testid="review-bucket-ai" name="완료" range="24시간 (완료시각 순)" tasks={view.buckets.aiDone} zone="완료" ctx={ctx} />
+                  </>
+                ) : (
+                  <>
+                    <ReviewBucket testid="review-bucket-todo" name="미완료 · 진행 중" range="" tasks={view.buckets.todo} zone="오늘 할 일" ctx={ctx} />
+                    <ReviewBucket testid="review-bucket-am" name="오전 계획·마감" range="08:30 ~ 11:50" tasks={view.buckets.am} zone="오전" ctx={ctx} />
+                    <ReviewBucket testid="review-bucket-pm" name="오후 마감" range="11:50 ~ 17:50" tasks={view.buckets.pm} zone="오후" ctx={ctx} />
+                    <ReviewBucket testid="review-bucket-night" name="🌙 야간" range="20:00 ~" tasks={view.buckets.night} zone="야간" ctx={ctx} />
+                  </>
+                )
               ) : (
                 (view.sections ?? []).filter((s) => s.tasks.length > 0).map((sec) => (
                   <div key={sec.kind} style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }} data-testid={`review-section-${sec.kind}`}>

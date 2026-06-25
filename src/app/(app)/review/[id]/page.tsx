@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { requireReviewer } from "@/lib/auth/guard";
 import { parseId } from "@/lib/auth/api";
 import { authorizeReview, canReview, canViewReview, getReviewOwner, reviewQueueForReviewer } from "@/lib/data/review";
-import { loadFullReport, bucketedTasks, type TaskRow } from "@/lib/data/reports";
+import { loadFullReport, bucketedTasks, aiTimelineTasks, effectiveWindow, type TaskRow } from "@/lib/data/reports";
 import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachments";
 import { commentMetaForReport } from "@/lib/data/comments";
 import { taskRejectionMap, getOpenTaskRejectCount } from "@/lib/data/task-rejections";
@@ -108,6 +108,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
     openRejectCount,
     heldTaskCount: full.tasks.length, // 휴가 보고서에 남아있는 업무 행 수(검수 카드 표시)
     queueNav,
+    isAi: effectiveWindow(full.report).isAi, // AI 그룹: 검수 화면도 24시간 단일 타임라인
     comms: full.comms.map((c) => ({ type: c.comm_type, counterpart: c.counterpart, time: c.occurred_at, summary: c.summary, attachments: commAttMap.get(c.id) ?? [] })),
     events: full.events.map((e) => ({ kind: e.kind, actorName: e.actor_name ?? null, comment: e.comment, rejectTarget: e.reject_target, at: e.created_at })),
   };
@@ -115,6 +116,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
   const view: ReviewView = v2
     ? (() => {
         const b = bucketedTasks(full);
+        const aiTl = base.isAi ? aiTimelineTasks(full) : null;
         return {
           ...base,
           model: 2,
@@ -123,6 +125,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
             am: b.am.map(toReviewTask),
             pm: b.pm.map(toReviewTask),
             night: b.night.map(toReviewTask),
+            aiDone: aiTl ? aiTl.done.map(toReviewTask) : [],
           },
         };
       })()
