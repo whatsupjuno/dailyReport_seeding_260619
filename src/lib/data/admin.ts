@@ -18,12 +18,20 @@ export interface GroupWithMembers {
   name: string;
   leader_id: number | null;
   leader_name: string | null;
+  is_ai_group: boolean;
+  write_start: string; // 'HH:MM'
+  write_end: string; // 'HH:MM'
+  submit_due: string | null; // 'HH:MM' 자동제출, null=OFF
   members: Array<{ id: number; name: string }>;
 }
 
 export async function listGroupsWithMembers(): Promise<GroupWithMembers[]> {
-  const groups = await query<{ id: number; name: string; leader_id: number | null; leader_name: string | null }>(
-    `SELECT g.id, g.name, g.leader_user_id AS leader_id, l.name AS leader_name
+  const groups = await query<{ id: number; name: string; leader_id: number | null; leader_name: string | null; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null }>(
+    `SELECT g.id, g.name, g.leader_user_id AS leader_id, l.name AS leader_name,
+            g.is_ai_group,
+            to_char(g.write_start,'HH24:MI') AS write_start,
+            to_char(g.write_end,'HH24:MI') AS write_end,
+            to_char(g.submit_due,'HH24:MI') AS submit_due
        FROM groups g LEFT JOIN users l ON l.id = g.leader_user_id
       ORDER BY g.id`,
   );
@@ -78,24 +86,45 @@ export async function listGroupOptions(): Promise<Array<{ id: number; name: stri
 
 // ===== 그룹 관리(생성/수정/삭제 + 구성원) =====
 
-/** 그룹 생성. 이름은 중복 불가(대소문자 무시). */
-export async function createGroup(input: { name: string; leaderId?: number | null }): Promise<{ id: number }> {
+/** 그룹 시간정책 입력(작성창·자동제출·AI그룹). 'HH:MM' 문자열. submitDue 빈값/null = 자동제출 OFF. */
+export interface GroupPolicyInput {
+  isAi?: boolean;
+  writeStart?: string | null;
+  writeEnd?: string | null;
+  submitDue?: string | null;
+}
+
+/** 그룹 생성. 이름은 중복 불가(대소문자 무시). AI그룹 토글·시간정책 포함. */
+export async function createGroup(input: { name: string; leaderId?: number | null } & GroupPolicyInput): Promise<{ id: number }> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1)`, [name]);
   if (dup) throw new Error("DUPLICATE_NAME");
   const r = await queryOne<{ id: number }>(
-    `INSERT INTO groups(name, leader_user_id) VALUES ($1,$2) RETURNING id`,
-    [name, input.leaderId ?? null],
+    `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [name, input.leaderId ?? null, !!input.isAi, input.writeStart || "00:00", input.writeEnd || "23:59", input.submitDue || null],
   );
   return { id: r!.id };
 }
 
-/** 그룹 정보 수정(이름·그룹장). 그룹장은 활성 사용자면 누구나(구성원 아니어도) — 한 사람이 복수 그룹장 가능. 미지정 허용. */
-export async function updateGroup(id: number, input: { name: string; leaderId: number | null }): Promise<void> {
+/**
+ * 그룹 정보 수정(이름·그룹장·시간정책). 그룹장은 활성 사용자면 누구나(구성원 아니어도). 미지정 허용.
+ * 반환 policyChanged=true면 시간정책(AI토글/작성창/자동제출)이 실제로 바뀐 것 → 호출부가 그룹원 메일 발송.
+ */
+export async function updateGroup(
+  id: number,
+  input: { name: string; leaderId: number | null } & GroupPolicyInput,
+): Promise<{ policyChanged: boolean; window: { isAi: boolean; writeStart: string; writeEnd: string; submitDue: string | null } }> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
-  const cur = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE id=$1`, [id]);
+  const cur = await queryOne<{ id: number; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null }>(
+    `SELECT id, is_ai_group,
+            to_char(write_start,'HH24:MI') AS write_start, to_char(write_end,'HH24:MI') AS write_end,
+            to_char(submit_due,'HH24:MI') AS submit_due
+       FROM groups WHERE id=$1`,
+    [id],
+  );
   if (!cur) throw new Error("NOT_FOUND");
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1) AND id<>$2`, [name, id]);
   if (dup) throw new Error("DUPLICATE_NAME");
@@ -104,7 +133,21 @@ export async function updateGroup(id: number, input: { name: string; leaderId: n
     const m = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1 AND active`, [input.leaderId]);
     if (!m) throw new Error("LEADER_NOT_ACTIVE");
   }
-  await query(`UPDATE groups SET name=$2, leader_user_id=$3 WHERE id=$1`, [id, name, input.leaderId]);
+  // 미지정 필드는 기존값 유지(부분 수정). submitDue는 빈문자/undefined 구분: undefined=유지, ''=OFF로 해제.
+  const isAi = input.isAi ?? cur.is_ai_group;
+  const writeStart = input.writeStart || cur.write_start;
+  const writeEnd = input.writeEnd || cur.write_end;
+  const submitDue = input.submitDue === undefined ? cur.submit_due : input.submitDue || null;
+  await query(
+    `UPDATE groups SET name=$2, leader_user_id=$3, is_ai_group=$4, write_start=$5, write_end=$6, submit_due=$7 WHERE id=$1`,
+    [id, name, input.leaderId, isAi, writeStart, writeEnd, submitDue],
+  );
+  const policyChanged =
+    isAi !== cur.is_ai_group ||
+    writeStart !== cur.write_start ||
+    writeEnd !== cur.write_end ||
+    (submitDue ?? null) !== (cur.submit_due ?? null);
+  return { policyChanged, window: { isAi, writeStart, writeEnd, submitDue: submitDue ?? null } };
 }
 
 /** 그룹 삭제. 구성원의 group_id와 그룹장 FK는 ON DELETE SET NULL로 자동 해제. */

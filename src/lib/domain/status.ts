@@ -17,7 +17,11 @@ export type ReportStatus =
 export type SectionKind = "plan" | "morning" | "afternoon" | "night";
 
 // v2 작성 모드(단일목록 모델). status + 휴가 플래그만으로 결정 — 섹션 비의존.
-export type WriteMode = "work" | "view" | "rejected" | "vacation";
+// review = 검수대기: 작성자가 승인 전까지 편집 가능(재제출/재알림 없음, 제출 버튼 숨김).
+export type WriteMode = "work" | "view" | "rejected" | "vacation" | "review";
+
+/** 최종 잠금(읽기 전용) 상태 — '검수대기'는 제외(승인 전까지 작성자 편집 허용). 데이터/UI 잠금 단일 진실원천. */
+export const FINAL_LOCKED: ReportStatus[] = ["승인", "제출완료", "재제출"];
 
 // v1 레거시(섹션 순차 모델) 작성 모드. legacy.ts 전용.
 export type LegacyWriteMode =

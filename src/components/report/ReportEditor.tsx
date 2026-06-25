@@ -61,6 +61,10 @@ export interface ReportView {
   am: ReportTask[];
   pm: ReportTask[];
   night: ReportTask[];
+  // AI 그룹: 오전/오후/야간 대신 24시간 단일 완료 타임라인. isAi면 am/pm/night 대신 aiDone 사용.
+  isAi: boolean;
+  aiDone: ReportTask[];
+  submitDueHm: string | null; // 'HH:MM' 자동제출(마감) 시각, null=없음. 마감 임박 라벨용.
   comms: Array<{ id: number; type: string; counterpart: string; time: string | null; summary: string; attachments: Array<{ id: number; fileName: string | null; url: string | null; comment: string | null }> }>;
   events: Array<{ kind: string; actorName: string | null; comment: string | null; rejectTarget: string | null; at: string }>;
   recentTasks: Array<{ name: string; project: string | null; planned: number | null }>;
@@ -251,16 +255,19 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   }
 
   const mode = view.mode;
-  const readOnly = mode === "view";
+  const reviewMode = mode === "review"; // 검수대기: 편집 가능·재제출 없음(제출 버튼 숨김)
+  const readOnly = mode === "view"; // 최종 잠금(승인/제출완료/재제출)만 읽기전용. review는 편집 가능.
   const isWork = mode === "work" && !vacationMode;
-  const submitted = mode === "view";
+  const submitted = mode === "view" || mode === "review"; // 스테퍼/배지: 제출됨 표시
 
   // 헤더 인디케이터: '마감까지 N'(작성 중일 때) + '저장됨 · 시각'
   let deadlineLabel: string | null = null;
-  if (nowMs !== null && isWork) {
+  if (nowMs !== null && isWork && view.submitDueHm) {
     const kst = new Date(new Date(nowMs).toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
-    const remain = 18 * 60 - (kst.getHours() * 60 + kst.getMinutes());
-    if (remain > 0 && remain <= 18 * 60) {
+    const [dh, dm] = view.submitDueHm.split(":").map(Number);
+    let remain = dh * 60 + dm - (kst.getHours() * 60 + kst.getMinutes());
+    if (remain <= 0) remain += 24 * 60; // 이미 지난 시각이면 다음 마감(AI 익일 09:00 등)
+    if (remain <= 18 * 60) { // 18시간 이내일 때만 임박 표시(윈도우 시작 직후 노이즈 방지)
       const h = Math.floor(remain / 60), m = remain % 60;
       deadlineLabel = h > 0 ? `마감까지 ${h}시간${m > 0 ? ` ${m}분` : ""}` : `마감까지 ${m}분`;
     }
@@ -269,8 +276,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const savedLabel = nowMs !== null && view.updatedAt
     ? `저장됨 · ${new Date(view.updatedAt).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "numeric", minute: "2-digit", hour12: true })}`
     : null;
-  const doneCount =
-    view.am.length + view.pm.length + view.night.filter((t) => t.status === "완결" || t.status === "지연").length;
+  const doneCount = view.isAi
+    ? view.aiDone.length
+    : view.am.length + view.pm.length + view.night.filter((t) => t.status === "완결" || t.status === "지연").length;
   // 미수정 행 반려 수(반려 모드 재제출 경고용)
   const openRejects = [...view.todo, ...view.am, ...view.pm, ...view.night].filter((t) => t.rejectState === "반려").length;
   const primaryLabel = vacationMode
@@ -623,7 +631,10 @@ export default function ReportEditor({ view }: { view: ReportView }) {
             {view.status}
           </span>
           <div style={{ flex: 1, minWidth: 8 }} />
-          {isWork && (
+          {isWork && view.isAi && (
+            <button onClick={() => setVacationMode(true)} data-testid="go-vacation" style={{ ...btnGhost, fontSize: 12, padding: "6px 12px" }}>근태 변경</button>
+          )}
+          {isWork && !view.isAi && (
             <>
               <span style={{ fontSize: 13, fontWeight: 600 }}>야간 업무</span>
               {nightOn && !nightReason.trim() && <span style={{ fontSize: 11, fontWeight: 600, color: "#DC2626" }}>사유 필요</span>}
@@ -643,8 +654,10 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           let banner: { icon: string; title: string; sub: string; bg: string; line: string; fg: string } | null = null;
           if (mode === "rejected")
             banner = { icon: "↩", title: "그룹장이 보고서를 반려했습니다.", sub: rejectComment ? `그룹장 코멘트: ${rejectComment}` : "반려된 업무만 수정·재마감한 뒤 다시 제출해 주세요.", bg: "#FCEBEB", line: "#F5C2C2", fg: "#B91C1C" };
+          else if (mode === "review")
+            banner = { icon: "⧗", title: "검수 대기 중입니다 — 승인 전까지 수정할 수 있어요.", sub: "수정 내용은 자동 저장됩니다. 다시 제출할 필요 없이 검수자가 최신본을 확인합니다.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
           else if (mode === "view")
-            banner = { icon: "⧗", title: "제출 완료 · 검수 대기 중입니다.", sub: "현재는 읽기 전용입니다. 수정이 필요하면 검수자에게 반려를 요청해 주세요.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
+            banner = { icon: "✓", title: view.status === "승인" ? "승인 완료된 보고서입니다." : "제출 완료된 보고서입니다.", sub: "최종 처리되어 읽기 전용입니다. 수정이 필요하면 검수자에게 반려를 요청해 주세요.", bg: "#E7F6EC", line: "#BBE5C8", fg: "#1F7A46" };
           else if (view.status === "계획제출")
             banner = { icon: "▸", title: "계획을 제출했어요.", sub: "검수자가 개별 업무를 확인할 수 있습니다. 하루를 마무리한 뒤 최종 제출해 주세요.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
           if (!banner) return null;
@@ -690,8 +703,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           </div>
         ) : (
           <>
-            {/* 오늘 할 일 (work 모드) + 반려 모드(보고서 수정 — 전체 편집 가능) */}
-            {(isWork || mode === "rejected") && (
+            {/* 오늘 할 일 (work 모드) + 반려 모드 + 검수대기(review, 승인 전 수정) */}
+            {(isWork || mode === "rejected" || reviewMode) && (
               <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderLeft: `3px solid ${mode === "rejected" ? "#DC2626" : "#3B5BDB"}`, borderRadius: 12, padding: "16px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(16,24,40,.08)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: mode === "rejected" ? "#B91C1C" : "#3B5BDB", background: mode === "rejected" ? "#FCEBEB" : "#EEF2FF", padding: "3px 9px", borderRadius: 9999 }}>{mode === "rejected" ? "보고서 수정" : "오늘 할 일"}</span>
@@ -824,11 +837,17 @@ export default function ReportEditor({ view }: { view: ReportView }) {
               </div>
             )}
 
-            {/* 결과 바구니: 오전 / 오후 / 야간 */}
-            <ResultBucket testid="result-bucket-am" zone="오전" icon="" name="오전" range="00:00 ~ 11:59" tasks={view.am} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오전에 마감한 업무가 없습니다." />
-            <ResultBucket testid="result-bucket-pm" zone="오후" icon="" name="오후" range="12:00 ~" tasks={view.pm} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오후에 마감한 업무가 없습니다." />
-            {(nightOn || view.night.length > 0) && (
-              <ResultBucket testid="result-bucket-night" zone="야간" icon="🌙 " name="야간" range="20:00 ~" tasks={view.night} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="마감한 야간 업무가 정리됩니다." />
+            {/* 결과 바구니: AI 그룹은 24시간 단일 타임라인, 그 외는 오전 / 오후 / 야간 */}
+            {view.isAi ? (
+              <ResultBucket testid="result-bucket-ai" zone="완료" icon="" name="완료" range="24시간 (완료시각 순)" tasks={view.aiDone} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 완료한 업무가 없습니다." />
+            ) : (
+              <>
+                <ResultBucket testid="result-bucket-am" zone="오전" icon="" name="오전" range="00:00 ~ 11:59" tasks={view.am} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오전에 마감한 업무가 없습니다." />
+                <ResultBucket testid="result-bucket-pm" zone="오후" icon="" name="오후" range="12:00 ~" tasks={view.pm} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오후에 마감한 업무가 없습니다." />
+                {(nightOn || view.night.length > 0) && (
+                  <ResultBucket testid="result-bucket-night" zone="야간" icon="🌙 " name="야간" range="20:00 ~" tasks={view.night} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="마감한 야간 업무가 정리됩니다." />
+                )}
+              </>
             )}
           </>
         )}
@@ -1122,7 +1141,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
             {vacationMode && (
               <button onClick={() => setVacationMode(false)} disabled={busy} data-testid="vacation-cancel" style={{ height: 44, padding: "0 18px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>취소</button>
             )}
-            <button onClick={onPrimary} disabled={busy} data-testid="primary-action" style={{ height: 44, padding: "0 22px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>{primaryLabel}</button>
+            {primaryLabel && (
+              <button onClick={onPrimary} disabled={busy} data-testid="primary-action" style={{ height: 44, padding: "0 22px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>{primaryLabel}</button>
+            )}
           </div>
         </div>
       )}

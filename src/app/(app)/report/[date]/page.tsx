@@ -7,15 +7,19 @@ import {
   loadFullReport,
   recentTaskSuggestions,
   bucketedTasks,
+  aiTimelineTasks,
+  effectiveWindow,
+  getUserGroupWindow,
   type TaskRow,
 } from "@/lib/data/reports";
+import { boundaryHour } from "@/lib/domain/window";
 import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachments";
 import { commentMetaForReport } from "@/lib/data/comments";
 import { taskRejectionMap } from "@/lib/data/task-rejections";
 import { listCarryoverCandidates } from "@/lib/data/report-mutations";
 import { computeWriteMode } from "@/lib/domain/mode";
 import { isV2Report } from "@/lib/domain/config";
-import { formatKoreanDate, todayKstISO, kstHm } from "@/lib/date";
+import { formatKoreanDate, todayKstISO, reportDateForBoundary, kstHm } from "@/lib/date";
 import ReportEditor, {
   type ReportView,
   type ReportTask,
@@ -42,10 +46,13 @@ export default async function ReportPage({
   const { write } = await searchParams;
   if (!isValidIsoDate(date)) notFound();
   const user = await requireUser();
+  // 그룹 경계 반영 '현재 보고일'(AI=09:00 경계 → 자정 넘김 윈도우를 한 보고서로). 비-AI는 todayKstISO와 동일.
+  const userWin = await getUserGroupWindow(user.id);
+  const todayForUser = reportDateForBoundary(boundaryHour(userWin));
 
   // 오늘 보고서만 자동 생성. 과거/타 날짜는 기존 것만 조회(임의 보고서 양산 방지)
   let reportId: number;
-  if (date === todayKstISO()) {
+  if (date === todayForUser) {
     if (!user.report_required) {
       // 작성 대상이 아니면 자동 생성하지 않음 — 기존 보고서가 있으면 그대로, 없으면 안내(원할 때만 ?write=1로 작성)
       const existing = await getReportByUserDate(user.id, date);
@@ -95,6 +102,10 @@ export default async function ReportPage({
 
   const mode = computeWriteMode(full.report.status, full.report.is_vacation);
   const buckets = bucketedTasks(full);
+  // 그룹 시간정책 스냅샷: AI면 오전/오후/야간 대신 24시간 완료 타임라인.
+  const win = effectiveWindow(full.report);
+  const aiTl = win.isAi ? aiTimelineTasks(full) : null;
+  const submitDueHm = win.submitDue ? win.submitDue.slice(0, 5) : null; // 'HH:MM:SS' → 'HH:MM'
   const toTask = (t: TaskRow): ReportTask => ({
     id: t.id,
     project: t.project,
@@ -136,6 +147,9 @@ export default async function ReportPage({
     am: buckets.am.map(toTask),
     pm: buckets.pm.map(toTask),
     night: buckets.night.map(toTask),
+    isAi: win.isAi,
+    aiDone: aiTl ? aiTl.done.map(toTask) : [],
+    submitDueHm,
     comms: full.comms.map((c) => ({
       id: c.id,
       type: c.comm_type,

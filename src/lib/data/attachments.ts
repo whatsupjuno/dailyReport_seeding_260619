@@ -3,8 +3,9 @@ import { randomBytes } from "node:crypto";
 import { extname, join, basename } from "node:path";
 import { env } from "../env";
 import { query, queryOne } from "../db";
+import { FINAL_LOCKED } from "../domain/status";
 
-const SUBMITTED = ["검수대기", "승인", "제출완료", "재제출"];
+// 최종 잠금만 첨부 차단. '검수대기'는 승인 전까지 작성자 편집 허용 → 첨부 가능(report-mutations와 단일 기준).
 
 export interface AttachmentRow {
   id: number;
@@ -28,7 +29,7 @@ async function assertEditableTask(taskId: number, userId: number) {
   );
   if (!row) throw new Error("NOT_FOUND");
   if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if (SUBMITTED.includes(row.status) || row.locked === true) throw new Error("LOCKED");
+  if ((FINAL_LOCKED as readonly string[]).includes(row.status) || row.locked === true) throw new Error("LOCKED");
 }
 
 export async function addUrlAttachment(
@@ -119,7 +120,7 @@ async function assertEditableComm(commId: number, userId: number) {
   );
   if (!row) throw new Error("NOT_FOUND");
   if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if (SUBMITTED.includes(row.status)) throw new Error("LOCKED");
+  if ((FINAL_LOCKED as readonly string[]).includes(row.status)) throw new Error("LOCKED");
 }
 
 export async function addCommFileAttachment(
@@ -206,7 +207,7 @@ export async function deleteCommAttachment(attId: number, userId: number): Promi
   );
   if (!row) throw new Error("NOT_FOUND");
   if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if (SUBMITTED.includes(row.status)) throw new Error("LOCKED");
+  if ((FINAL_LOCKED as readonly string[]).includes(row.status)) throw new Error("LOCKED");
   await query(`DELETE FROM communication_attachments WHERE id=$1`, [attId]);
 }
 

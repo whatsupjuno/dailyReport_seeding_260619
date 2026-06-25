@@ -47,10 +47,10 @@ test("계획 제출(1차) → 제출하기(최종) 2단계", async ({ page }) =>
   await page.getByTestId("submit-confirm").click();
   await expect(page.getByTestId("report-status")).toContainText("검수대기");
 
-  // 제출 후(view) 읽기 전용: 업무 추가/마감/마감취소 버튼이 노출되지 않아야 함
-  await expect(page.getByTestId("add-task")).toHaveCount(0);
-  await expect(page.locator('[data-testid^="mark-done-"]')).toHaveCount(0);
-  await expect(page.locator('[data-testid^="reopen-"]')).toHaveCount(0);
+  // 검수대기(review): 승인 전까지 편집 가능 — 업무 추가 노출, 제출 버튼은 숨김, 안내 배너 표시.
+  await expect(page.getByTestId("add-task")).toHaveCount(1);
+  await expect(page.getByTestId("primary-action")).toHaveCount(0); // 재제출 버튼 없음
+  await expect(page.getByTestId("mode-banner")).toContainText("승인 전까지 수정");
 });
 
 test("빈 계획 제출 차단", async ({ page }) => {

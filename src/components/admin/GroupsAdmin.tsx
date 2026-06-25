@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Member = { id: number; name: string };
-export type AdminGroup = { id: number; name: string; leader_id: number | null; leader_name: string | null; members: Member[] };
+export type AdminGroup = { id: number; name: string; leader_id: number | null; leader_name: string | null; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; members: Member[] };
 export type BriefUser = { id: number; name: string; login_id: string; group_id: number | null; group_name: string | null };
 
 export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; users: BriefUser[] }) {
@@ -14,11 +14,19 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
   // 그룹 생성
   const [createOpen, setCreateOpen] = useState(false);
   const [cName, setCName] = useState("");
+  const [cIsAi, setCIsAi] = useState(false);
+  const [cWs, setCWs] = useState("08:00");
+  const [cWe, setCWe] = useState("18:59");
+  const [cDue, setCDue] = useState(""); // ''=자동제출 OFF
 
   // 그룹 수정
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState("");
   const [eLeader, setELeader] = useState(""); // userId 문자열 또는 ""
+  const [eIsAi, setEIsAi] = useState(false);
+  const [eWs, setEWs] = useState("08:00");
+  const [eWe, setEWe] = useState("18:59");
+  const [eDue, setEDue] = useState("");
 
   // 구성원 추가 모달
   const [memberForId, setMemberForId] = useState<number | null>(null);
@@ -40,20 +48,30 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
     }
   }
 
+  // AI 그룹 토글 시 작성창/마감 기본값 자동 채움(수정 가능).
+  function applyAiDefaults(on: boolean, set: { ws: (v: string) => void; we: (v: string) => void; due: (v: string) => void }) {
+    if (on) { set.ws("09:00"); set.we("08:59"); set.due("09:00"); }
+    else { set.ws("08:00"); set.we("18:59"); set.due(""); }
+  }
+
   async function createGroup() {
     if (!cName.trim()) { alert("그룹명을 입력해 주세요."); return; }
     const ok = await send("/api/admin/groups", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: cName.trim() }),
+      body: JSON.stringify({ name: cName.trim(), isAi: cIsAi, writeStart: cWs, writeEnd: cWe, submitDue: cDue || null }),
     });
-    if (ok) { setCName(""); setCreateOpen(false); }
+    if (ok) { setCName(""); setCIsAi(false); setCWs("08:00"); setCWe("18:59"); setCDue(""); setCreateOpen(false); }
   }
 
   function openEdit(g: AdminGroup) {
     setEditId(g.id);
     setEName(g.name);
     setELeader(g.leader_id ? String(g.leader_id) : "");
+    setEIsAi(g.is_ai_group);
+    setEWs(g.write_start);
+    setEWe(g.write_end);
+    setEDue(g.submit_due ?? "");
   }
   async function saveEdit() {
     if (editId == null) return;
@@ -61,7 +79,7 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
     const ok = await send(`/api/admin/groups/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: eName.trim(), leaderId: eLeader ? Number(eLeader) : null }),
+      body: JSON.stringify({ name: eName.trim(), leaderId: eLeader ? Number(eLeader) : null, isAi: eIsAi, writeStart: eWs, writeEnd: eWe, submitDue: eDue || null }),
     });
     if (ok) setEditId(null);
   }
@@ -81,6 +99,7 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
   }
 
   const inp: React.CSSProperties = { width: "100%", height: 40, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 12px", fontFamily: "inherit", fontSize: 14, outline: "none", boxSizing: "border-box" };
+  const timeInp: React.CSSProperties = { display: "block", marginTop: 4, height: 36, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 8px", fontFamily: "inherit", fontSize: 13, outline: "none" };
   const smallBtn: React.CSSProperties = { height: 28, padding: "0 10px", border: "1px solid #CBD0D9", borderRadius: 7, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer" };
 
   // 구성원 추가 후보: 해당 그룹에 없는 사용자
@@ -139,6 +158,17 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>그룹명</label>
             <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="예: 마케팅팀" data-testid="group-name" autoFocus style={inp} onKeyDown={(e) => { if (e.key === "Enter") createGroup(); }} />
             <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: 8 }}>그룹장과 구성원은 생성 후 지정할 수 있습니다.</div>
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #EFF1F5" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#3A4150", cursor: "pointer" }}>
+                <input type="checkbox" data-testid="group-ai-toggle" checked={cIsAi} onChange={(e) => { setCIsAi(e.target.checked); applyAiDefaults(e.target.checked, { ws: setCWs, we: setCWe, due: setCDue }); }} />
+                AI 그룹 <span style={{ fontWeight: 400, color: "#9AA1AE" }}>(09:00 경계 · 24시간 표기 · 매일)</span>
+              </label>
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>작성 시작<br /><input type="time" value={cWs} onChange={(e) => setCWs(e.target.value)} data-testid="group-write-start" style={timeInp} /></label>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>작성 종료<br /><input type="time" value={cWe} onChange={(e) => setCWe(e.target.value)} data-testid="group-write-end" style={timeInp} /></label>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>자동제출 <span style={{ color: "#9AA1AE" }}>(빈칸=없음)</span><br /><input type="time" value={cDue} onChange={(e) => setCDue(e.target.value)} data-testid="group-submit-due" style={timeInp} /></label>
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={() => setCreateOpen(false)} style={{ height: 40, padding: "0 16px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
               <button onClick={createGroup} disabled={busy} data-testid="group-create-submit" style={{ height: 40, padding: "0 20px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>만들기</button>
@@ -160,6 +190,18 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
               {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
             </select>
             <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: 8 }}>활성 사용자 누구나 지정할 수 있어요(구성원 아니어도 가능). 한 사람이 여러 그룹의 그룹장을 맡을 수 있습니다.</div>
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #EFF1F5" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#3A4150", cursor: "pointer" }}>
+                <input type="checkbox" data-testid="group-edit-ai-toggle" checked={eIsAi} onChange={(e) => { setEIsAi(e.target.checked); applyAiDefaults(e.target.checked, { ws: setEWs, we: setEWe, due: setEDue }); }} />
+                AI 그룹 <span style={{ fontWeight: 400, color: "#9AA1AE" }}>(09:00 경계 · 24시간 표기 · 매일)</span>
+              </label>
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>작성 시작<br /><input type="time" value={eWs} onChange={(e) => setEWs(e.target.value)} data-testid="group-edit-write-start" style={timeInp} /></label>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>작성 종료<br /><input type="time" value={eWe} onChange={(e) => setEWe(e.target.value)} data-testid="group-edit-write-end" style={timeInp} /></label>
+                <label style={{ fontSize: 11, color: "#6B7280" }}>자동제출 <span style={{ color: "#9AA1AE" }}>(빈칸=없음)</span><br /><input type="time" value={eDue} onChange={(e) => setEDue(e.target.value)} data-testid="group-edit-submit-due" style={timeInp} /></label>
+              </div>
+              <div style={{ fontSize: 11, color: "#9AA1AE", marginTop: 8 }}>변경 시 다음 보고서부터 적용되고, 그룹 구성원에게 안내 메일이 발송됩니다.</div>
+            </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={() => setEditId(null)} style={{ height: 40, padding: "0 16px", border: "1px solid #CBD0D9", borderRadius: 8, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
               <button onClick={saveEdit} disabled={busy} data-testid="group-edit-save" style={{ height: 40, padding: "0 20px", border: "none", borderRadius: 8, background: "#3B5BDB", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>저장</button>

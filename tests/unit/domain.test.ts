@@ -68,9 +68,12 @@ describe("writePrimaryLabel (v2, 2단계)", () => {
   it("반려 → 다시 제출", () => {
     expect(writePrimaryLabel("반려")).toBe("다시 제출");
   });
-  it("검수대기/승인 → 제출 완료", () => {
-    expect(writePrimaryLabel("검수대기")).toBe("제출 완료");
+  it("검수대기(review) → 빈 라벨(제출 버튼 숨김)", () => {
+    expect(writePrimaryLabel("검수대기")).toBe("");
+  });
+  it("승인/제출완료(view) → 제출 완료", () => {
     expect(writePrimaryLabel("승인")).toBe("제출 완료");
+    expect(writePrimaryLabel("제출완료")).toBe("제출 완료");
   });
 });
 

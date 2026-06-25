@@ -1,11 +1,11 @@
 import { tx } from "../db";
 import type { PoolClient } from "pg";
 import { computeWriteMode } from "../domain/mode";
-import type { ReportStatus } from "../domain/status";
+import { FINAL_LOCKED, type ReportStatus } from "../domain/status";
 
 // v2 단일목록 모델 mutation. 잠금은 보고서 status 기반(섹션 JOIN 없음).
 const WORK_STATUSES = ["미작성", "작성중", "계획제출"]; // 업무 추가/마감 가능
-const SUBMITTED = ["검수대기", "승인", "제출완료", "재제출"]; // 읽기 전용
+// 최종 잠금(읽기 전용)은 FINAL_LOCKED(승인/제출완료/재제출). '검수대기'는 승인 전까지 편집 허용 → 잠금 아님.
 const VAC_REQUIRED = ["병가", "휴직", "기타"]; // 사유 필수 유형
 
 async function loadStatus(c: PoolClient, reportId: number): Promise<ReportStatus> {
@@ -27,6 +27,7 @@ async function loadStatus(c: PoolClient, reportId: number): Promise<ReportStatus
 function assertRowEditable(status: ReportStatus, _rejectState: string | null) {
   if (WORK_STATUSES.includes(status)) return;
   if (status === "반려") return;
+  if (status === "검수대기") return; // 승인 전까지 작성자 편집 허용(제출 후 수정)
   throw new Error("LOCKED_TASK");
 }
 
@@ -36,7 +37,7 @@ function assertRowEditable(status: ReportStatus, _rejectState: string | null) {
  * 반려(status='반려') 모드는 작성자가 반려를 보고 고치는 흐름이라 ack 불필요.
  */
 function assertSawReject(status: ReportStatus, rejectState: string | null, ack?: boolean) {
-  if (WORK_STATUSES.includes(status) && rejectState === "반려" && !ack)
+  if ((WORK_STATUSES.includes(status) || status === "검수대기") && rejectState === "반려" && !ack)
     throw new Error("HAS_OPEN_REJECT");
 }
 
@@ -63,8 +64,9 @@ export async function addTask(reportId: number, input: AddTaskInput): Promise<{ 
   if (!input.title?.trim()) throw new Error("TITLE_REQUIRED");
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
-    // 작성 가능 status + 반려(작성자가 보고서를 고치는 중)에서 추가 허용. 제출이후(검수대기/승인 등)는 잠금.
-    if (!WORK_STATUSES.includes(status) && status !== "반려") throw new Error("LOCKED_TASK");
+    // 작성 가능 status + 반려 + 검수대기(승인 전 수정)에서 추가 허용. 최종잠금(승인/제출완료/재제출)만 차단.
+    if (!WORK_STATUSES.includes(status) && status !== "반려" && status !== "검수대기")
+      throw new Error("LOCKED_TASK");
 
     const ord = await c.query<{ n: number }>(
       `SELECT COALESCE(MAX(sort_order)+1,0) AS n FROM tasks WHERE report_id=$1`,
@@ -114,18 +116,23 @@ export async function closeTask(
     assertSawReject(status, t.rows[0].reject_state, opts?.ackReject);
     await c.query(
       `WITH ca AS (
-         SELECT CASE WHEN $3::text IS NOT NULL
-                     THEN (r.report_date + $3::time) AT TIME ZONE 'Asia/Seoul'
-                     ELSE now() END AS ts,
-                r.night_has
+         SELECT CASE
+                  WHEN $3::text IS NULL THEN now()
+                  -- AI 그룹(보고일=윈도우 시작일): 00:00~08:59 마감은 시작일+1일에 귀속(24h 어긋남 방지).
+                  WHEN r.win_snapshotted AND r.win_is_ai AND $3::time < TIME '09:00'
+                    THEN ((r.report_date + INTERVAL '1 day') + $3::time) AT TIME ZONE 'Asia/Seoul'
+                  ELSE (r.report_date + $3::time) AT TIME ZONE 'Asia/Seoul'
+                END AS ts,
+                r.night_has,
+                (r.win_snapshotted AND r.win_is_ai) AS is_ai
            FROM daily_reports r WHERE r.id=$2
        )
        UPDATE tasks SET
          status = (CASE WHEN $4::text IS NOT NULL THEN '지연' ELSE '완결' END)::task_status,
          hold_reason = $4,
          completed_at = (SELECT ts FROM ca),
-         -- 야간 토글(night_has)이 켜져 있고 마감 KST 시 ≥20일 때만 야간(C1). 토글 off면 오전/오후로 분류돼 사라지지 않음.
-         is_night = ((SELECT night_has FROM ca) AND EXTRACT(HOUR FROM (SELECT ts FROM ca) AT TIME ZONE 'Asia/Seoul') >= 20),
+         -- AI 그룹은 24h 표기(야간 버킷 없음) → is_night 항상 false. 그 외엔 야간토글 ON + 마감 KST ≥20 일 때만 야간.
+         is_night = (NOT (SELECT is_ai FROM ca) AND (SELECT night_has FROM ca) AND EXTRACT(HOUR FROM (SELECT ts FROM ca) AT TIME ZONE 'Asia/Seoul') >= 20),
          updated_at = now()
        WHERE id=$1 AND report_id=$2`,
       [taskId, reportId, doneTime, holdReason],
@@ -263,7 +270,9 @@ export async function advanceReport(
     const isVac = cur.rows[0].is_vacation || wantVacation;
     const mode = computeWriteMode(status, isVac);
 
-    if (mode === "view") return { mode, status, submitted: false, carried: 0 };
+    // 검수대기는 '이미 제출됨' — 편집은 허용하되 재제출/재알림은 차단(review·휴가 모두). 최종잠금(view)도 no-op.
+    if (mode === "view" || mode === "review" || status === "검수대기")
+      return { mode, status, submitted: false, carried: 0 };
 
     // 공통 필드 저장(편집 가능 모드)
     if (input.dailyComment !== undefined)
@@ -350,6 +359,43 @@ export async function advanceReport(
       [reportId],
     );
     return { mode, status: "계획제출", submitted: false, carried: 0 };
+  });
+}
+
+/**
+ * cron 자동제출(마감 시각): 작성중/계획제출/미작성 보고서를 검수대기로 직행. 멱등(FOR UPDATE).
+ * - 빈 보고서(업무 0건)도 제출(EMPTY_PLAN 미적용). 검수대기/최종잠금/반려는 스킵.
+ * - 휴가는 휴가로 제출(필수유형 빈 사유는 placeholder 보정 — 0007 CHECK 위반 방지).
+ * - 미완료 업무는 carryover ON. report_events에 'auto_submitted'(actor NULL) 기록.
+ */
+export async function autoSubmitReport(reportId: number): Promise<{ done: boolean; carried: number }> {
+  return tx(async (c) => {
+    const cur = (
+      await c.query<{ user_id: number; status: ReportStatus }>(
+        `SELECT user_id, status FROM daily_reports WHERE id=$1 FOR UPDATE`,
+        [reportId],
+      )
+    ).rows[0];
+    if (!cur) return { done: false, carried: 0 };
+    if (cur.status === "검수대기" || FINAL_LOCKED.includes(cur.status) || cur.status === "반려")
+      return { done: false, carried: 0 }; // 멱등/스킵
+    await c.query(
+      `UPDATE daily_reports
+          SET vacation_comment = CASE
+                WHEN is_vacation AND vacation_type IN ('병가','휴직','기타')
+                     AND (vacation_comment IS NULL OR btrim(vacation_comment)='')
+                THEN '(자동제출 — 사유 미기재)' ELSE vacation_comment END,
+              status='검수대기', submitted_at=now(),
+              plan_submitted_at=COALESCE(plan_submitted_at, now()), updated_at=now()
+        WHERE id=$1`,
+      [reportId],
+    );
+    await c.query(
+      `INSERT INTO report_events(report_id, kind, actor_user_id) VALUES ($1,'auto_submitted',NULL)`,
+      [reportId],
+    );
+    const carried = await carryoverToNext(c, reportId, cur.user_id);
+    return { done: true, carried };
   });
 }
 
@@ -533,7 +579,7 @@ export async function addCommunication(
 ): Promise<{ id: number }> {
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
-    if (SUBMITTED.includes(status)) throw new Error("LOCKED_SECTION");
+    if (FINAL_LOCKED.includes(status)) throw new Error("LOCKED_SECTION");
     const r = await c.query<{ id: number }>(
       `INSERT INTO communications(report_id, comm_type, counterpart, occurred_at, summary)
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
@@ -554,7 +600,7 @@ export async function deleteCommunication(commId: number, userId: number): Promi
     );
     if (!row.rows[0]) throw new Error("NOT_FOUND");
     if (row.rows[0].user_id !== userId) throw new Error("FORBIDDEN");
-    if (SUBMITTED.includes(row.rows[0].status)) throw new Error("LOCKED_SECTION");
+    if ((FINAL_LOCKED as readonly string[]).includes(row.rows[0].status)) throw new Error("LOCKED_SECTION");
     await c.query(`DELETE FROM communications WHERE id=$1`, [commId]);
   });
 }
@@ -571,7 +617,7 @@ export async function saveDraft(
 ): Promise<void> {
   return tx(async (c) => {
     const status = await loadStatus(c, reportId);
-    if (SUBMITTED.includes(status)) throw new Error("LOCKED_SECTION");
+    if (FINAL_LOCKED.includes(status)) throw new Error("LOCKED_SECTION");
     if (input.dailyComment !== undefined)
       await c.query(`UPDATE daily_reports SET daily_comment=$2, updated_at=now() WHERE id=$1`, [
         reportId,

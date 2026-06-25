@@ -9,8 +9,10 @@ describe("computeWriteMode (v2, 2인자 4모드)", () => {
     expect(computeWriteMode("작성중", false)).toBe("work");
     expect(computeWriteMode("계획제출", false)).toBe("work"); // 계획제출도 편집 자유(D3)
   });
-  it("검수대기/승인/제출완료/재제출 → view", () => {
-    expect(computeWriteMode("검수대기", false)).toBe("view");
+  it("검수대기 → review (승인 전까지 편집 가능, 재제출 없음)", () => {
+    expect(computeWriteMode("검수대기", false)).toBe("review");
+  });
+  it("승인/제출완료/재제출 → view (최종 잠금)", () => {
     expect(computeWriteMode("승인", false)).toBe("view");
     expect(computeWriteMode("제출완료", false)).toBe("view");
     expect(computeWriteMode("재제출", false)).toBe("view");
@@ -24,8 +26,11 @@ describe("computeWriteMode (v2, 2인자 4모드)", () => {
   it("반려가 휴가보다 우선", () => {
     expect(computeWriteMode("반려", true)).toBe("rejected");
   });
-  it("제출이후(view)가 휴가보다 우선", () => {
-    expect(computeWriteMode("검수대기", true)).toBe("view");
+  it("검수대기+휴가 → vacation (승인 전까지 휴가 편집 가능)", () => {
+    expect(computeWriteMode("검수대기", true)).toBe("vacation");
+  });
+  it("최종 잠금(view)이 휴가보다 우선", () => {
+    expect(computeWriteMode("승인", true)).toBe("view");
   });
 });
 

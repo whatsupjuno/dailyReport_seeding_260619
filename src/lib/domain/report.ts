@@ -89,6 +89,7 @@ export function stepper2(opts: {
  */
 export function writePrimaryLabel(status: ReportStatus): string {
   const mode = computeWriteMode(status, false);
+  if (mode === "review") return ""; // 검수대기: 제출 버튼 미노출(수정만, 재제출 없음)
   if (mode === "view") return "제출 완료";
   if (mode === "rejected") return "다시 제출";
   if (status === "계획제출") return "제출하기";

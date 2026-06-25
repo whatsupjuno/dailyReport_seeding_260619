@@ -1,6 +1,8 @@
 import { query, queryOne, tx } from "../db";
+import type { PoolClient } from "pg";
 import { isV2Date } from "../domain/config";
-import { bucketTasks, type Buckets } from "../domain/classify";
+import { bucketTasks, byCompletedThenCreated, type Buckets } from "../domain/classify";
+import { DEFAULT_WINDOW, type GroupWindow } from "../domain/window";
 import type { ReportStatus, SectionKind, TaskStatus } from "../domain/status";
 
 export interface ReportRow {
@@ -20,6 +22,12 @@ export interface ReportRow {
   model_version: number; // 1=레거시 섹션, 2=단일목록(v2)
   plan_submitted_at: string | null; // C2 1차(계획) 제출 표식
   updated_at: string; // 마지막 저장 시각(헤더 '저장됨' 표시용)
+  // 그룹 시간정책 스냅샷(보고서 생성 시 고정). win_snapshotted=false면 DEFAULT_WINDOW 폴백.
+  win_snapshotted: boolean;
+  win_is_ai: boolean | null;
+  win_write_start: string | null;
+  win_write_end: string | null;
+  win_submit_due: string | null;
 }
 
 export interface SectionRow {
@@ -90,12 +98,14 @@ export async function getOrCreateReport(userId: number, dateISO: string): Promis
       `SELECT id FROM daily_reports WHERE user_id = $1 AND report_date = $2`,
       [userId, dateISO],
     );
-    if (existing.rows[0]) return existing.rows[0].id;
+    if (existing.rows[0]) return existing.rows[0].id; // 기존 행 유지 → 정책 변경은 '다음 보고서부터'
 
+    const win = await loadGroupWindow(c, userId); // 생성 시점 그룹 정책 스냅샷(고정)
     const r = await c.query<{ id: number }>(
-      `INSERT INTO daily_reports(user_id, report_date, status, model_version)
-         VALUES ($1,$2,'작성중',$3) RETURNING id`,
-      [userId, dateISO, v2 ? 2 : 1],
+      `INSERT INTO daily_reports(user_id, report_date, status, model_version,
+         win_snapshotted, win_is_ai, win_write_start, win_write_end, win_submit_due)
+         VALUES ($1,$2,'작성중',$3, true, $4,$5,$6,$7) RETURNING id`,
+      [userId, dateISO, v2 ? 2 : 1, win.isAi, win.writeStart, win.writeEnd, win.submitDue],
     );
     const reportId = r.rows[0].id;
     if (!v2) {
@@ -113,6 +123,47 @@ export async function getReportByUserDate(userId: number, dateISO: string): Prom
     `SELECT * FROM daily_reports WHERE user_id = $1 AND report_date = $2`,
     [userId, dateISO],
   );
+}
+
+function rowToWindow(row: { is_ai_group: boolean | null; write_start: string | null; write_end: string | null; submit_due: string | null } | null): GroupWindow {
+  // 그룹 없음(LEFT JOIN 전부 NULL)이면 DEFAULT_WINDOW. is_ai_group=false는 정상 비-AI 그룹.
+  if (!row || row.is_ai_group == null) return DEFAULT_WINDOW;
+  return {
+    isAi: row.is_ai_group,
+    writeStart: row.write_start ?? "00:00:00",
+    writeEnd: row.write_end ?? "23:59:00",
+    submitDue: row.submit_due,
+  };
+}
+
+async function loadGroupWindow(c: PoolClient, userId: number): Promise<GroupWindow> {
+  const r = await c.query<{ is_ai_group: boolean | null; write_start: string | null; write_end: string | null; submit_due: string | null }>(
+    `SELECT g.is_ai_group, g.write_start, g.write_end, g.submit_due
+       FROM users u LEFT JOIN groups g ON g.id = u.group_id WHERE u.id = $1`,
+    [userId],
+  );
+  return rowToWindow(r.rows[0] ?? null);
+}
+
+/** 사용자의 그룹 시간정책(현재값). 그룹 없으면 DEFAULT_WINDOW. 보고일 계산(reportDateFor)·자동제출 대상 선정에 사용. */
+export async function getUserGroupWindow(userId: number): Promise<GroupWindow> {
+  const row = await queryOne<{ is_ai_group: boolean | null; write_start: string | null; write_end: string | null; submit_due: string | null }>(
+    `SELECT g.is_ai_group, g.write_start, g.write_end, g.submit_due
+       FROM users u LEFT JOIN groups g ON g.id = u.group_id WHERE u.id = $1`,
+    [userId],
+  );
+  return rowToWindow(row);
+}
+
+/** 보고서의 스냅샷 정책(생성 시 고정). 미스냅샷(기존 행)이면 DEFAULT_WINDOW. */
+export function effectiveWindow(r: ReportRow): GroupWindow {
+  if (!r.win_snapshotted) return DEFAULT_WINDOW;
+  return {
+    isAi: !!r.win_is_ai,
+    writeStart: r.win_write_start ?? "00:00:00",
+    writeEnd: r.win_write_end ?? "23:59:00",
+    submitDue: r.win_submit_due,
+  };
 }
 
 export async function loadFullReport(reportId: number): Promise<FullReport | null> {
@@ -193,4 +244,16 @@ export function sectionStatusMap(sections: SectionRow[]): Partial<Record<Section
 /** #4 v2: 보고서 업무를 오늘 할 일 / 오전 / 오후 / 야간 버킷으로 분류 (야간은 night_has 토글) */
 export function bucketedTasks(full: FullReport): Buckets<TaskRow> {
   return bucketTasks(full.tasks, full.report.night_has);
+}
+
+/** AI 그룹: 오전/오후/야간 버킷 없이 미완료(todo) + 완료(24시간 타임라인, 완료시각 오름차순). */
+export function aiTimelineTasks(full: FullReport): { todo: TaskRow[]; done: TaskRow[] } {
+  const todo: TaskRow[] = [];
+  const done: TaskRow[] = [];
+  for (const t of full.tasks) {
+    if ((t.status === "완결" || t.status === "지연") && t.completed_at != null) done.push(t);
+    else todo.push(t);
+  }
+  done.sort(byCompletedThenCreated);
+  return { todo, done };
 }

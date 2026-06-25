@@ -36,7 +36,7 @@ function createdMs(t: ClassifiableTask): number {
  * 분 단위로 묶는 이유: 표시값이 HH:MM이라 '같은 시각'의 직관 = 같은 분. 초/ms 차이로 순서가
  * 흔들리지 않게 분으로 1차 비교하고, 동률만 등록순으로 안정 정렬.
  */
-function byCompletedThenCreated(a: ClassifiableTask, b: ClassifiableTask): number {
+export function byCompletedThenCreated(a: ClassifiableTask, b: ClassifiableTask): number {
   return (
     Math.floor(completedMs(a) / 60000) - Math.floor(completedMs(b) / 60000) ||
     createdMs(a) - createdMs(b)

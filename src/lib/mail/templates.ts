@@ -94,6 +94,22 @@ export function approvedEmail(to: string, toName: string, link: string): MailMes
 }
 
 /** 제출 완료(컨펌 요청) → 그룹장. */
+/** 그룹 보고 시간정책 변경 안내 — 그룹 구성원 대상. summary = 새 작성창/자동제출 요약(여러 줄). */
+export function timePolicyChangedEmail(to: string, toName: string, summary: string, link: string): MailMessage {
+  return {
+    to,
+    toName,
+    kind: "time_policy_changed",
+    subject: "[Seeding] 보고서 작성·제출 시간이 변경되었습니다",
+    html: wrap(
+      "보고 시간 정책 변경 안내",
+      `<p style="font-size:14px;color:#3a4150">${escapeHtml(toName)}님, 소속 그룹의 일일 업무 보고 시간이 변경되었습니다. 다음 보고서부터 적용됩니다.</p>
+       <div style="font-size:14px;color:#1a1f2b;background:#f7f8fa;border:1px solid #e2e5eb;border-radius:8px;padding:12px 14px;margin:12px 0;white-space:pre-line">${escapeHtml(summary)}</div>
+       ${button(link, "보고서 열기")}`,
+    ),
+  };
+}
+
 export function reviewRequestEmail(to: string, toName: string, authorName: string, link: string): MailMessage {
   return {
     to, toName, kind: "review_request",

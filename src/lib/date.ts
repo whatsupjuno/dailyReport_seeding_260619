@@ -12,6 +12,16 @@ export function todayKstISO(now: Date = new Date()): string {
   }).format(now);
 }
 
+/**
+ * 경계시각 반영 '현재 보고일'(KST 'YYYY-MM-DD'). now에서 boundaryHour를 뺀 시점의 KST 날짜 = 윈도우 시작일.
+ * - boundaryHour=0(비-AI): todayKstISO(now)와 동일.
+ * - boundaryHour=9(AI): 00:00~08:59는 전날(윈도우 시작일)로 귀속, 09:00~23:59는 당일.
+ */
+export function reportDateForBoundary(boundaryHour: number, now: Date = new Date()): string {
+  const shifted = new Date(now.getTime() - boundaryHour * 3_600_000);
+  return todayKstISO(shifted);
+}
+
 /** 'YYYY-MM-DD' → '2026년 6월 18일 (목)' */
 export function formatKoreanDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);

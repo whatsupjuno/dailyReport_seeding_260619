@@ -3,7 +3,7 @@ import { env } from "../env";
 import { mailer } from "./index";
 import type { MailMessage } from "./transport";
 import { getUserById } from "../data/users";
-import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail } from "./templates";
+import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail, timePolicyChangedEmail } from "./templates";
 
 // 이벤트(액션) 기반 이메일 알림 — 상태변경 tx '커밋 후' best-effort 호출.
 // notifications를 단일 원장으로: 항상 1행(sent/failed/skipped). id는 bigint(런타임 문자열)이므로 비교는 String 정규화.
@@ -62,6 +62,29 @@ export async function notifyApproved(owner: Owner, reportId: number, actorId: nu
     await record(emp.id, reportId, "approved", approvedEmail(emp.email, emp.name, empLink(date)));
   } catch {
     /* best-effort */
+  }
+}
+
+/** 그룹 시간정책 변경 → 그룹 구성원(작성 대상)에게 안내 메일. best-effort. report 비귀속(report_id NULL). */
+export async function notifyTimePolicyChanged(groupId: number, summary: string): Promise<void> {
+  try {
+    const members = await query<{ id: number; name: string; email: string | null }>(
+      `SELECT id, name, email FROM users WHERE group_id=$1 AND active AND COALESCE(report_required,true) AND email IS NOT NULL`,
+      [groupId],
+    );
+    const link = `${env.appBaseUrl}/login`;
+    for (const m of members) {
+      if (!m.email) continue;
+      const msg = timePolicyChangedEmail(m.email, m.name, summary, link);
+      const res = await mailer().send(msg);
+      await query(
+        `INSERT INTO notifications(user_id, report_id, kind, subject, status, provider_id, sent_at, error)
+         VALUES ($1, NULL, 'time_policy_changed', $2, $3, $4, now(), $5)`,
+        [m.id, msg.subject, res.ok ? "sent" : "failed", res.id || null, res.error ?? null],
+      );
+    }
+  } catch {
+    /* best-effort: 메일 실패가 정책 변경을 막지 않음 */
   }
 }
 
