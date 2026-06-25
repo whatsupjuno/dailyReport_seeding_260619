@@ -43,6 +43,7 @@ export interface TaskRow {
   hold_reason: string | null;
   sort_order: number;
   completed_at: string | null; // #4 마감 시각(KST 분류 기준)
+  created_at: string | null; // 등록 시각(오전/오후 동률 정렬 타이브레이크)
   is_night: boolean; // #4 야간 플래그
   reject_state: string | null; // #3 NULL=정상, '반려'=행 반려
   rejected_at: string | null;

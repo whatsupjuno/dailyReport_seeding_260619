@@ -13,6 +13,7 @@ export interface DrawerTask {
 
 interface Comment {
   id: number;
+  parentId: number | null;
   author: string;
   role: string;
   body: string;
@@ -49,6 +50,13 @@ export default function CommentDrawer({
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [replyTo, setReplyTo] = useState<number | null>(null); // 답글 작성 중인 부모 댓글 id
+  const [replyDraft, setReplyDraft] = useState("");
+
+  async function refetch() {
+    const list = await fetch(`/api/tasks/${task.id}/comments`).then((r) => r.json());
+    if (list.ok) setComments(list.comments ?? []);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -96,9 +104,32 @@ export default function CommentDrawer({
         alert(d.error ?? "등록에 실패했습니다.");
         return;
       }
-      const list = await fetch(`/api/tasks/${task.id}/comments`).then((r) => r.json());
-      if (list.ok) setComments(list.comments ?? []);
+      await refetch();
       setDraft("");
+      onChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function postReply(parentId: number) {
+    const body = replyDraft.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body, parentId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.ok) {
+        alert(d.error ?? "등록에 실패했습니다.");
+        return;
+      }
+      await refetch();
+      setReplyTo(null);
+      setReplyDraft("");
       onChanged?.();
     } finally {
       setBusy(false);
@@ -139,22 +170,36 @@ export default function CommentDrawer({
               <div style={{ fontSize: 13, color: "#9AA1AE", marginTop: 4 }}>이 업무에 대한 첫 댓글을 남겨보세요.</div>
             </div>
           ) : (
-            comments.map((c) => {
-              const rs = ROLE_STYLE[c.role] ?? ROLE_STYLE["직원"];
-              return (
-                <div key={c.id} data-testid="comment-item" style={{ display: "flex", gap: 10, padding: "10px 0 12px", borderBottom: "1px solid #F2F3F6", boxShadow: c.me ? "none" : "inset 3px 0 0 #EEF2FF", paddingLeft: 8 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 9999, flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: c.me ? "#3B5BDB" : "#EEF2FF", color: c.me ? "#fff" : "#2F49B0", fontSize: 12, fontWeight: 700 }}>{c.author.slice(0, 1)}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>{c.author}{c.me ? " (나)" : ""}</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: rs.fg, background: rs.bg, borderRadius: 9999, padding: "1px 7px" }}>{c.role}</span>
-                      <span style={{ fontSize: 11, color: "#9AA1AE" }} className="tnum">{hhmm(c.at)}</span>
-                    </div>
-                    <div style={{ fontSize: 14, lineHeight: "21px", color: "#3A4150", marginTop: 4, whiteSpace: "pre-wrap" }}>{c.body}</div>
+            comments
+              .filter((c) => c.parentId == null)
+              .map((parent) => {
+                const children = comments.filter((c) => c.parentId === parent.id);
+                return (
+                  <div key={parent.id} data-testid="comment-thread">
+                    <CommentItem c={parent} />
+                    {children.length > 0 && (
+                      <div style={{ marginLeft: 38, borderLeft: "2px solid #EDEFF3", paddingLeft: 6 }}>
+                        {children.map((ch) => (
+                          <CommentItem key={ch.id} c={ch} reply />
+                        ))}
+                      </div>
+                    )}
+                    {canWrite &&
+                      (replyTo === parent.id ? (
+                        <div style={{ marginLeft: 38, marginTop: 2, marginBottom: 10 }}>
+                          <textarea value={replyDraft} onChange={(e) => setReplyDraft(e.target.value.slice(0, 10000))} autoFocus data-testid="reply-input" placeholder="답글을 남겨주세요." style={{ width: "100%", minHeight: 44, border: "1px solid #CBD0D9", borderRadius: 8, padding: "8px 10px", fontFamily: "inherit", fontSize: 13, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                            <div style={{ flex: 1 }} />
+                            <button onClick={() => { setReplyTo(null); setReplyDraft(""); }} style={{ height: 32, padding: "0 12px", border: "1px solid #CBD0D9", borderRadius: 7, background: "#fff", color: "#3A4150", fontFamily: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>취소</button>
+                            <button onClick={() => postReply(parent.id)} disabled={!replyDraft.trim() || busy} data-testid="reply-post" style={{ height: 32, padding: "0 14px", border: "none", borderRadius: 7, background: replyDraft.trim() ? "#3B5BDB" : "#E2E5EB", color: replyDraft.trim() ? "#fff" : "#9AA1AE", fontFamily: "inherit", fontSize: 12, fontWeight: 600, cursor: replyDraft.trim() ? "pointer" : "default" }}>답글 등록</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setReplyTo(parent.id); setReplyDraft(""); }} data-testid="reply-open" style={{ marginLeft: 38, marginBottom: 10, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "2px 0" }}>↳ 답글</button>
+                      ))}
                   </div>
-                </div>
-              );
-            })
+                );
+              })
           )}
         </div>
 
@@ -176,6 +221,25 @@ export default function CommentDrawer({
         </div>
       </div>
     </>
+  );
+}
+
+/** 댓글/대댓글 단일 항목 렌더(최상위·답글 공통). reply=true면 답글 톤(작은 아바타·구분선 없음). */
+function CommentItem({ c, reply = false }: { c: Comment; reply?: boolean }) {
+  const rs = ROLE_STYLE[c.role] ?? ROLE_STYLE["직원"];
+  const av = reply ? 24 : 28;
+  return (
+    <div data-testid="comment-item" style={{ display: "flex", gap: 10, padding: reply ? "8px 0" : "10px 0 12px", borderBottom: reply ? "none" : "1px solid #F2F3F6", boxShadow: c.me ? "none" : "inset 3px 0 0 #EEF2FF", paddingLeft: 8 }}>
+      <div style={{ width: av, height: av, borderRadius: 9999, flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: c.me ? "#3B5BDB" : "#EEF2FF", color: c.me ? "#fff" : "#2F49B0", fontSize: 12, fontWeight: 700 }}>{c.author.slice(0, 1)}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{c.author}{c.me ? " (나)" : ""}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: rs.fg, background: rs.bg, borderRadius: 9999, padding: "1px 7px" }}>{c.role}</span>
+          <span style={{ fontSize: 11, color: "#9AA1AE" }} className="tnum">{hhmm(c.at)}</span>
+        </div>
+        <div style={{ fontSize: 14, lineHeight: "21px", color: "#3A4150", marginTop: 4, whiteSpace: "pre-wrap" }}>{c.body}</div>
+      </div>
+    </div>
   );
 }
 

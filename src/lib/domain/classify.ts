@@ -9,6 +9,7 @@ export type Bucket = "todo" | "am" | "pm" | "night";
 export interface ClassifiableTask {
   status: string; // 계획 | 진행중 | 완결 | 지연
   completed_at: Date | string | null;
+  created_at?: Date | string | null; // 동률(같은 분 마감) 타이브레이크용 등록 시각
   is_night: boolean;
 }
 
@@ -22,6 +23,24 @@ function completedMs(t: ClassifiableTask): number {
   if (t.completed_at == null) return 0;
   const d = typeof t.completed_at === "string" ? new Date(t.completed_at) : t.completed_at;
   return d.getTime();
+}
+
+function createdMs(t: ClassifiableTask): number {
+  if (t.created_at == null) return 0;
+  const d = typeof t.created_at === "string" ? new Date(t.created_at) : t.created_at;
+  return d.getTime();
+}
+
+/**
+ * 오전/오후 버킷 정렬: 실제 마감시각(분 단위) 오름차순, 같은 분이면 등록(생성) 시각 오름차순.
+ * 분 단위로 묶는 이유: 표시값이 HH:MM이라 '같은 시각'의 직관 = 같은 분. 초/ms 차이로 순서가
+ * 흔들리지 않게 분으로 1차 비교하고, 동률만 등록순으로 안정 정렬.
+ */
+function byCompletedThenCreated(a: ClassifiableTask, b: ClassifiableTask): number {
+  return (
+    Math.floor(completedMs(a) / 60000) - Math.floor(completedMs(b) / 60000) ||
+    createdMs(a) - createdMs(b)
+  );
 }
 
 /**
@@ -66,8 +85,8 @@ export function bucketTasks<T extends ClassifiableTask>(tasks: T[], nightOn: boo
       // null → 숨김
     }
   }
-  am.sort((a, b) => completedMs(a) - completedMs(b));
-  pm.sort((a, b) => completedMs(a) - completedMs(b));
+  am.sort(byCompletedThenCreated);
+  pm.sort(byCompletedThenCreated);
   // '오늘 할 일'은 자동 정렬하지 않음 — 입력 배열 순서(= 쿼리 sort_order, id) = 사용자 지정 순서(드래그 재정렬)
   return { todo, am, pm, night };
 }

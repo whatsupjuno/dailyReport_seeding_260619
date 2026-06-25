@@ -30,7 +30,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     canWrite: access.canWrite,
     task: { id: access.ctx.task_id, title: access.ctx.title, project: access.ctx.project, status: access.ctx.status },
     comments: comments.map((c) => ({
-      id: c.id,
+      id: Number(c.id),
+      parentId: c.parent_id == null ? null : Number(c.parent_id),
       author: c.author_name,
       role: ROLE_LABEL[c.author_role] ?? c.author_role,
       body: c.body,
@@ -51,16 +52,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!access) return forbidden();
   if (!access.canWrite) return forbidden();
 
-  const body = (await req.json().catch(() => ({}))) as { body?: string };
+  const body = (await req.json().catch(() => ({}))) as { body?: string; parentId?: number };
   if (!body.body?.trim()) return badRequest("댓글을 입력해 주세요.");
+  let parentId: number | null = null;
+  if (body.parentId != null) {
+    if (!Number.isSafeInteger(body.parentId) || body.parentId <= 0)
+      return badRequest("잘못된 답글 대상입니다.");
+    parentId = body.parentId;
+  }
 
   try {
-    const res = await addComment(taskId, user.id, user.role, body.body);
+    const res = await addComment(taskId, user.id, user.role, body.body, parentId);
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {
     const m = (e as Error).message;
     if (m === "EMPTY") return badRequest("댓글을 입력해 주세요.");
     if (m === "TOO_LONG") return badRequest("댓글은 최대 10,000자까지 입력할 수 있습니다.");
+    if (m === "INVALID_PARENT") return badRequest("답글을 달 댓글을 찾을 수 없습니다.");
     if (m === "NOT_FOUND") return badRequest("업무를 찾을 수 없습니다.");
     throw e;
   }

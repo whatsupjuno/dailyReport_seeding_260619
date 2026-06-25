@@ -1225,8 +1225,8 @@ function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable =
     <div data-testid="task-row" data-task-id={t.id} data-todo-id={reorderable ? t.id : undefined} style={{ borderBottom: "1px solid #F2F3F6", boxShadow: rejected ? "inset 3px 0 0 #3B5BDB" : "none", paddingLeft: rejected ? 10 : 0, background: dragging ? "#F3F5FF" : "transparent" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: hasDetail ? "12px 0 0" : "12px 0" }}>
         {reorderable && (
-          <button type="button" aria-label="순서 변경" data-testid={`drag-handle-${t.id}`} onPointerDown={onDragStart} style={{ flex: "none", width: 8, marginTop: 3, display: "flex", alignItems: "flex-start", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "grab", color: dragging ? "#3B5BDB" : "#C2C7D0", touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
-            <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="3" r="1.5" /><circle cx="9" cy="3" r="1.5" /><circle cx="3" cy="8" r="1.5" /><circle cx="9" cy="8" r="1.5" /><circle cx="3" cy="13" r="1.5" /><circle cx="9" cy="13" r="1.5" /></svg>
+          <button type="button" aria-label="순서 변경" title="드래그해서 순서 변경" data-testid={`drag-handle-${t.id}`} onPointerDown={onDragStart} style={{ flex: "none", width: 8, alignSelf: "stretch", margin: "-12px 0 -12px -8px", display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "grab", color: dragging ? "#3B5BDB" : "#C2C7D0", touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
+            <svg width="4" height="16" viewBox="0 0 4 16" fill="currentColor"><circle cx="2" cy="2" r="1.3" /><circle cx="2" cy="6" r="1.3" /><circle cx="2" cy="10" r="1.3" /><circle cx="2" cy="14" r="1.3" /></svg>
           </button>
         )}
         <div style={{ width: 20, height: 20, borderRadius: 9999, flex: "none", marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", border: `1.5px solid ${inProgress ? "#2563EB" : "#CBD0D9"}` }}>

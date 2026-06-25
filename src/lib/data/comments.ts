@@ -11,6 +11,7 @@ export interface CommentRow {
   author_name: string;
   body: string;
   created_at: string;
+  parent_id: number | null; // NULL=최상위, 값=대댓글(부모 댓글 id, 1단계)
 }
 
 export interface TaskContext {
@@ -56,19 +57,24 @@ export async function listComments(taskId: number): Promise<CommentRow[]> {
   // LEFT JOIN: 작성자가 삭제(SET NULL)돼도 댓글 본문 보존, 이름은 폴백 표기.
   return query<CommentRow>(
     `SELECT tc.id, tc.task_id, tc.report_id, tc.author_user_id, tc.author_role,
-            COALESCE(u.name, '(삭제된 사용자)') AS author_name, tc.body, tc.created_at
+            COALESCE(u.name, '(삭제된 사용자)') AS author_name, tc.body, tc.created_at, tc.parent_id
        FROM task_comments tc LEFT JOIN users u ON u.id = tc.author_user_id
       WHERE tc.task_id = $1 ORDER BY tc.created_at, tc.id`,
     [taskId],
   );
 }
 
-/** 댓글 추가. body 1~10,000자(DB CHECK와 동일). author_role 기록(작성 당시 역할). */
+/**
+ * 댓글 추가. body 1~10,000자(DB CHECK와 동일). author_role 기록(작성 당시 역할).
+ * parentId 주면 대댓글 — 부모가 같은 업무의 댓글인지 검증(IDOR 차단) + 1단계로 평탄화
+ * (부모가 이미 대댓글이면 그 최상위 root에 매단다).
+ */
 export async function addComment(
   taskId: number,
   authorUserId: number,
   authorRole: string,
   body: string,
+  parentId?: number | null,
 ): Promise<{ id: number }> {
   const trimmed = body.trim();
   if (trimmed.length === 0) throw new Error("EMPTY");
@@ -76,10 +82,20 @@ export async function addComment(
   return tx(async (c) => {
     const ctx = await c.query<{ report_id: number }>(`SELECT report_id FROM tasks WHERE id=$1`, [taskId]);
     if (!ctx.rows[0]) throw new Error("NOT_FOUND");
+    let parent: number | string | null = null;
+    if (parentId != null) {
+      // 같은 업무의 댓글만 부모로 허용. 부모가 자식이면 그 root(parent_id)로 평탄화 → 항상 1단계.
+      const p = await c.query<{ id: number; parent_id: number | null }>(
+        `SELECT id, parent_id FROM task_comments WHERE id=$1 AND task_id=$2`,
+        [parentId, taskId],
+      );
+      if (!p.rows[0]) throw new Error("INVALID_PARENT");
+      parent = p.rows[0].parent_id ?? p.rows[0].id;
+    }
     const r = await c.query<{ id: number }>(
-      `INSERT INTO task_comments(task_id, report_id, author_user_id, author_role, body)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [taskId, ctx.rows[0].report_id, authorUserId, authorRole, trimmed],
+      `INSERT INTO task_comments(task_id, report_id, author_user_id, author_role, body, parent_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [taskId, ctx.rows[0].report_id, authorUserId, authorRole, trimmed, parent],
     );
     // 작성자는 자기 댓글을 본 것으로 간주(읽음 워터마크 갱신)
     await c.query(

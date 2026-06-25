@@ -71,6 +71,23 @@ describe("bucketTasks", () => {
     expect(b.todo[0].status).toBe("계획");
     expect(b.todo[1].status).toBe("진행중");
   });
+  it("같은 분 마감이면 초가 늦어도 등록(created_at) 빠른 업무가 먼저 — 분 단위 + 등록순 타이브레이크", () => {
+    // a: 10:00:50 마감·07:00 등록 / b: 10:00:10 마감·09:00 등록 → 같은 10:00분대 동률 → 등록 빠른 a 먼저.
+    // (full precision이라면 초가 빠른 b가 먼저였을 것 → 분 단위임을 구분)
+    const a = task({ completed_at: at("2026-06-19T10:00:50+09:00"), created_at: at("2026-06-19T07:00:00+09:00") });
+    const b = task({ completed_at: at("2026-06-19T10:00:10+09:00"), created_at: at("2026-06-19T09:00:00+09:00") });
+    const r = bucketTasks([b, a], false); // 입력 순서 b,a여도 정렬로 a 먼저
+    expect(r.am).toHaveLength(2);
+    expect(r.am[0].created_at).toBe(a.created_at);
+    expect(r.am[1].created_at).toBe(b.created_at);
+  });
+  it("마감 분이 다르면 등록 시각과 무관하게 마감시각 순", () => {
+    const early = task({ completed_at: at("2026-06-19T09:10:00+09:00"), created_at: at("2026-06-19T23:00:00+09:00") });
+    const late = task({ completed_at: at("2026-06-19T11:40:00+09:00"), created_at: at("2026-06-19T01:00:00+09:00") });
+    const r = bucketTasks([late, early], false);
+    expect(r.am[0].completed_at).toBe(early.completed_at);
+    expect(r.am[1].completed_at).toBe(late.completed_at);
+  });
   it("nightOn=false면 야간 task는 어디에도 안 들어감(숨김)", () => {
     const tasks = [task({ is_night: true, status: "완결", completed_at: at("2026-06-19T21:00:00+09:00") })];
     const b = bucketTasks(tasks, false);

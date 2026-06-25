@@ -42,3 +42,6 @@ uploads/
 
 # decoded design artifacts (reference only)
 _design_v*_decoded.html
+
+# 임시 렌더/디버그 스크립트(추적 제외, 디스크엔 유지)
+scripts/_*.mjs
