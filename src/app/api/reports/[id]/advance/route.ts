@@ -23,10 +23,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     const res = await advanceReport(reportId, body);
-    // 제출/재제출 → 그룹장에게 검수 요청 알림(반환값 기준). 1차 계획제출(submitted=false)·열람은 제외. best-effort
+    // 그룹장 알림(반환값 기준, best-effort). 최종/재제출/휴가제출 → 검수요청, 1차 계획제출 → 계획 컨펌요청.
     if (res.submitted === true && res.mode !== "view") {
       const owner = await getReviewOwner(reportId);
       if (owner) await notifyLeaderReview(owner, reportId, res.mode === "rejected" ? "resubmit_review" : "review_request");
+    } else if (res.mode === "work" && res.status === "계획제출") {
+      // 1차 계획 제출 → 그룹장에게 '계획이 제출됨, 1차 컨펌/계획 반려 필요'(D4: 발송)
+      const owner = await getReviewOwner(reportId);
+      if (owner) await notifyLeaderReview(owner, reportId, "plan_review_request");
     }
     return NextResponse.json({ ok: true, ...res });
   } catch (e) {

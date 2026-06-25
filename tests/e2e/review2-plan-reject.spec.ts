@@ -106,3 +106,18 @@ test("셀프(본인이 자기 그룹 그룹장): 제출 시 리더 알림은 ski
   expect(await notifCount("review_request", { loginId: "kim.doyun", status: "sent" })).toBe(beforeSent);
   expect(await notifCount("review_request", { loginId: "kim.doyun", status: "skipped" })).toBe(beforeSkip + 1);
 });
+
+test("1차 계획 제출 → 그룹장에게 계획 컨펌요청(plan_review_request) 알림", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await clearTodayReport("kim.seoyeon"); // 마케팅팀(그룹장 kim.jiwon≠본인) — 깨끗한 작성중
+  await login(page, "kim.seoyeon");
+  await page.getByTestId("add-task").click();
+  await page.getByTestId("add-title").fill("계획제출 알림 검증");
+  await page.getByTestId("add-submit").click();
+  await expect(page.getByTestId("task-row").filter({ hasText: "계획제출 알림 검증" })).toBeVisible();
+  const before = await notifCount("plan_review_request", { loginId: "kim.jiwon", status: "sent" });
+  await page.getByTestId("primary-action").click(); // 1차 계획 제출
+  await expect(page.getByTestId("report-status")).toContainText("계획제출");
+  // 그룹장(kim.jiwon)에게 계획 컨펌요청 1건
+  expect(await notifCount("plan_review_request", { loginId: "kim.jiwon", status: "sent" })).toBe(before + 1);
+});

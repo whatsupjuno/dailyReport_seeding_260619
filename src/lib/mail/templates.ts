@@ -118,3 +118,16 @@ export function resubmitReviewEmail(to: string, toName: string, authorName: stri
     ),
   };
 }
+
+/** 1차 계획 제출 → 그룹장(계획 컨펌/계획 반려 안내). */
+export function planReviewRequestEmail(to: string, toName: string, authorName: string, link: string): MailMessage {
+  return {
+    to, toName, kind: "plan_review_request",
+    subject: `[Seeding] ${authorName}님이 오늘 계획을 제출했습니다`,
+    html: wrap(
+      "계획 1차 컨펌이 필요해요",
+      `<p style="font-size:14px;color:#3a4150"><b>${escapeHtml(authorName)}</b>님이 오늘 업무 계획을 제출했어요. 계획을 확인하고 그대로 진행하거나, 필요하면 ‘계획 반려’로 돌려보내 주세요.</p>
+       ${button(link, "계획 확인하러 가기")}`,
+    ),
+  };
+}

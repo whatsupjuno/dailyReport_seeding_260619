@@ -3,7 +3,7 @@ import { env } from "../env";
 import { mailer } from "./index";
 import type { MailMessage } from "./transport";
 import { getUserById } from "../data/users";
-import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail } from "./templates";
+import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail } from "./templates";
 
 // 이벤트(액션) 기반 이메일 알림 — 상태변경 tx '커밋 후' best-effort 호출.
 // notifications를 단일 원장으로: 항상 1행(sent/failed/skipped). id는 bigint(런타임 문자열)이므로 비교는 String 정규화.
@@ -65,8 +65,8 @@ export async function notifyApproved(owner: Owner, reportId: number, actorId: nu
   }
 }
 
-/** 제출/재제출 → 그룹장에게. 리더 null(미기록)·비활성·셀프면 skip. */
-export async function notifyLeaderReview(owner: Owner, reportId: number, kind: "review_request" | "resubmit_review"): Promise<void> {
+/** 제출/재제출/계획제출 → 그룹장에게. 리더 null(미기록)·비활성·셀프면 skip. */
+export async function notifyLeaderReview(owner: Owner, reportId: number, kind: "review_request" | "resubmit_review" | "plan_review_request"): Promise<void> {
   try {
     const leaderId = owner.leader_user_id;
     if (leaderId == null) return; // 리더 없음 → 수신자 없음(미기록)
@@ -81,7 +81,7 @@ export async function notifyLeaderReview(owner: Owner, reportId: number, kind: "
       return;
     }
     if (!leader.email) return;
-    const tpl = kind === "review_request" ? reviewRequestEmail : resubmitReviewEmail;
+    const tpl = kind === "review_request" ? reviewRequestEmail : kind === "resubmit_review" ? resubmitReviewEmail : planReviewRequestEmail;
     await record(leader.id, reportId, kind, tpl(leader.email, leader.name, owner.name, leaderLink(reportId)));
   } catch {
     /* best-effort */
