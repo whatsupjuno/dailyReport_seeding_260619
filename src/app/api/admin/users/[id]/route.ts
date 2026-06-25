@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiUser, badRequest, forbidden, parseId, unauthorized } from "@/lib/auth/api";
-import { updateUser } from "@/lib/data/admin";
+import { updateUser, isValidEmail } from "@/lib/data/admin";
 
 /** 사용자 수정 — 관리자 전용 */
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -18,10 +18,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     active?: boolean;
     reportRequired?: boolean;
     loginCode?: string;
+    email?: string;
   };
   if (!body.name?.trim()) return badRequest("이름을 입력해 주세요.");
   const loginCode = body.loginCode?.trim();
   if (loginCode && !/^\d{4}$/.test(loginCode)) return badRequest("인증번호는 숫자 4자리로 입력해 주세요.");
+  const email = typeof body.email === "string" && body.email.trim() ? body.email.trim() : undefined;
+  if (email && !isValidEmail(email)) return badRequest("올바른 이메일 형식이 아닙니다. (예: name@company.com)");
 
   try {
     await updateUser(userId, {
@@ -31,6 +34,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       active: body.active ?? true,
       reportRequired: typeof body.reportRequired === "boolean" ? body.reportRequired : undefined,
       loginCode: loginCode || undefined,
+      email,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
@@ -38,6 +42,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (m === "NAME_REQUIRED") return badRequest("이름을 입력해 주세요.");
     if (m === "NOT_FOUND") return badRequest("사용자를 찾을 수 없습니다.");
     if (m === "INVALID_CODE") return badRequest("인증번호는 숫자 4자리로 입력해 주세요.");
+    if (m === "INVALID_EMAIL") return badRequest("올바른 이메일 형식이 아닙니다.");
     throw e;
   }
 }

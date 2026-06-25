@@ -10,22 +10,24 @@ export default function AddUser({ groups, open, onClose }: { groups: Array<{ id:
   const [role, setRole] = useState<"employee" | "group_leader" | "admin">("employee");
   const [groupId, setGroupId] = useState<string>(groups[0]?.id ? String(groups[0].id) : "");
   const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function close() { setCode(""); onClose(); }
+  function close() { setCode(""); setEmail(""); onClose(); }
   async function submit() {
     if (!name.trim() || !loginId.trim()) { alert("이름과 아이디를 입력해 주세요."); return; }
     if (code && !/^\d{4}$/.test(code)) { alert("인증번호는 숫자 4자리로 입력해 주세요."); return; }
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { alert("올바른 이메일 형식으로 입력해 주세요. (예: name@company.com)"); return; }
     setBusy(true);
     try {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), loginId: loginId.trim(), role, groupId: groupId ? Number(groupId) : null, loginCode: code || undefined }),
+        body: JSON.stringify({ name: name.trim(), loginId: loginId.trim(), role, groupId: groupId ? Number(groupId) : null, loginCode: code || undefined, email: email.trim() || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) { alert(data.error ?? "추가 실패"); return; }
-      setName(""); setLoginId(""); setCode(""); onClose();
+      setName(""); setLoginId(""); setCode(""); setEmail(""); onClose();
       router.refresh();
     } finally {
       setBusy(false);
@@ -51,6 +53,17 @@ export default function AddUser({ groups, open, onClose }: { groups: Array<{ id:
         <div style={cell}>
           <label style={label}>아이디 <span style={{ color: "#DC2626" }}>*</span></label>
           <input value={loginId} onChange={(e) => setLoginId(e.target.value)} placeholder="사번 또는 아이디" data-testid="user-loginid" style={field} />
+        </div>
+      </div>
+
+      {/* 이메일 */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+        <div style={cell}>
+          <label style={label}>이메일</label>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" inputMode="email" placeholder="예: name@company.com" data-testid="user-email" style={field} />
+        </div>
+        <div style={{ ...cell, display: "flex", alignItems: "flex-end" }}>
+          <div style={{ fontSize: 12, color: "#9AA1AE", lineHeight: "18px", paddingBottom: 11 }}>미입력 시 아이디로 자동 설정됩니다. 보고 안내·알림 메일이 이 주소로 발송됩니다.</div>
         </div>
       </div>
 

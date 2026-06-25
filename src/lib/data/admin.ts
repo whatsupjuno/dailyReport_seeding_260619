@@ -1,5 +1,18 @@
 import { query, queryOne, tx } from "../db";
 
+// 이메일 형식 검증(이중 @ 등 잘못된 형식 차단) — 정책: 저장되는 이메일은 항상 유효 형식이어야 함.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export function isValidEmail(s: string): boolean {
+  return EMAIL_RE.test((s ?? "").trim());
+}
+/** 이메일 도출: 명시 입력이 있으면 그대로, 없으면 login_id가 이메일이면 그대로, 아니면 login_id@company.com. */
+export function resolveEmail(loginId: string, email?: string): string {
+  const e = (email ?? "").trim();
+  if (e) return e;
+  const lid = (loginId ?? "").trim();
+  return isValidEmail(lid) ? lid : `${lid}@company.com`;
+}
+
 export interface GroupWithMembers {
   id: number;
   name: string;
@@ -34,6 +47,7 @@ export interface CreateUserInput {
 
 export async function createUser(input: CreateUserInput): Promise<{ id: number }> {
   if (input.loginCode != null && !/^\d{4}$/.test(input.loginCode)) throw new Error("INVALID_CODE");
+  if (!isValidEmail(input.email)) throw new Error("INVALID_EMAIL");
   return tx(async (c) => {
     const dup = (await c.query<{ id: number }>(`SELECT id FROM users WHERE lower(login_id)=lower($1)`, [input.loginId])).rows[0];
     if (dup) throw new Error("DUPLICATE_LOGIN_ID");
@@ -124,18 +138,21 @@ export interface UpdateUserInput {
   reportRequired?: boolean;
   /** 로그인 인증번호(4자리). 미지정(undefined)이면 기존 값 유지. */
   loginCode?: string;
+  /** 이메일. 미지정(undefined)이면 기존 값 유지. 지정 시 유효 형식이어야 함. */
+  email?: string;
 }
 
-/** 사용자 수정(이름/역할/소속/활성/작성대상/인증번호). 비활성 전환 시 해당 사용자 세션 일괄 폐기(권한 누수창 차단). */
+/** 사용자 수정(이름/역할/소속/활성/작성대상/인증번호/이메일). 비활성 전환 시 해당 사용자 세션 일괄 폐기(권한 누수창 차단). */
 export async function updateUser(id: number, input: UpdateUserInput): Promise<void> {
   if (!input.name.trim()) throw new Error("NAME_REQUIRED");
   if (input.loginCode != null && !/^\d{4}$/.test(input.loginCode)) throw new Error("INVALID_CODE");
+  if (input.email != null && !isValidEmail(input.email)) throw new Error("INVALID_EMAIL");
   await tx(async (c) => {
     const cur = (await c.query<{ active: boolean }>(`SELECT active FROM users WHERE id=$1`, [id])).rows[0];
     if (!cur) throw new Error("NOT_FOUND");
     await c.query(
-      `UPDATE users SET name=$2, role=$3, group_id=$4, active=$5, report_required=COALESCE($6, report_required), login_code=COALESCE($7, login_code) WHERE id=$1`,
-      [id, input.name.trim(), input.role, input.groupId, input.active, input.reportRequired ?? null, input.loginCode ?? null],
+      `UPDATE users SET name=$2, role=$3, group_id=$4, active=$5, report_required=COALESCE($6, report_required), login_code=COALESCE($7, login_code), email=COALESCE($8, email) WHERE id=$1`,
+      [id, input.name.trim(), input.role, input.groupId, input.active, input.reportRequired ?? null, input.loginCode ?? null, input.email?.trim() ?? null],
     );
 
     // 그룹장 실체(groups.leader_user_id) 동기화 — role/소속과 어긋난 '유령 그룹장' 방지.

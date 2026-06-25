@@ -254,3 +254,31 @@ test("작성 제외 사용자: 로그인 시 작성 화면으로 안 보냄 + �
   await expect(p.getByTestId("report-header")).toBeVisible();
   await ctx.close();
 });
+
+test("이메일 정책: 아이디가 이메일이면 그대로(이중 @ 방지) + 잘못된 형식 차단(서버 400·편집 차단)", async ({ page }) => {
+  await login(page, "park.sora");
+  await page.goto("/admin/users");
+
+  // 1) 아이디가 이메일인데 이메일 미입력 → @company.com 덧붙이지 않고 그대로 도출
+  await page.getByTestId("add-user-open").click();
+  await page.getByTestId("user-name").fill("이메일아이디");
+  await page.getByTestId("user-loginid").fill("emailid@wavle.io");
+  await page.getByTestId("user-group").selectOption("");
+  await page.getByTestId("add-user-submit").click();
+  await expect(page.getByTestId("admin-users-table")).toContainText("이메일아이디");
+
+  // 편집 모달에 도출된 이메일이 이중 @ 아님(emailid@wavle.io)
+  await page.getByTestId("admin-user-search").fill("이메일아이디");
+  await page.getByTestId("admin-user-row").filter({ hasText: "이메일아이디" }).getByRole("button", { name: "수정" }).click();
+  await expect(page.getByTestId("admin-edit-email")).toHaveValue("emailid@wavle.io");
+
+  // 잘못된 형식으로 저장 시도 → 클라 검증으로 차단(모달 유지)
+  page.once("dialog", (d) => d.accept());
+  await page.getByTestId("admin-edit-email").fill("emailid@wavle.io@company.com");
+  await page.getByTestId("admin-edit-save").click();
+  await expect(page.getByTestId("admin-edit-modal")).toBeVisible();
+
+  // 2) 서버단 검증: 잘못된 이메일 형식은 400
+  const res = await page.request.post("/api/admin/users", { data: { name: "x", loginId: "bad.email.user", email: "not-an-email" } });
+  expect(res.status()).toBe(400);
+});

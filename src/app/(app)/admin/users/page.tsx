@@ -12,7 +12,7 @@ export default async function AdminUsersPage() {
       <div style={{ fontSize: 22, fontWeight: 700 }}>사용자 관리</div>
       <div style={{ fontSize: 14, color: "#6B7280", marginTop: 4, marginBottom: 20 }}>사용자 계정과 소속 그룹·역할을 관리합니다.</div>
       <UsersAdmin
-        users={users.map((u) => ({ id: u.id, name: u.name, login_id: u.login_id, role: u.role, group_id: u.group_id, group_name: u.group_name ?? null, active: u.active, report_required: u.report_required }))}
+        users={users.map((u) => ({ id: u.id, name: u.name, login_id: u.login_id, email: u.email, role: u.role, group_id: u.group_id, group_name: u.group_name ?? null, active: u.active, report_required: u.report_required }))}
         groups={groups}
       />
     </div>

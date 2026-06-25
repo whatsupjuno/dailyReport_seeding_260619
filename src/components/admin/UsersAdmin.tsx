@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import AddUser from "./AddUser";
 
-type U = { id: number; name: string; login_id: string; role: string; group_id: number | null; group_name: string | null; active: boolean; report_required: boolean };
+type U = { id: number; name: string; login_id: string; email: string; role: string; group_id: number | null; group_name: string | null; active: boolean; report_required: boolean };
 
 const ROLES: Array<["employee" | "group_leader" | "admin", string]> = [["employee", "직원"], ["group_leader", "그룹장"], ["admin", "관리자"]];
 const ROLE_BADGE: Record<string, [string, string]> = { admin: ["#2F49B0", "#EEF2FF"], group_leader: ["#7A5B00", "#FBF4DA"], employee: ["#3A4150", "#F1F2F4"] };
@@ -20,6 +20,7 @@ export default function UsersAdmin({ users, groups }: { users: U[]; groups: Arra
   const [eRole, setERole] = useState<"employee" | "group_leader" | "admin">("employee");
   const [eGroup, setEGroup] = useState("");
   const [eActive, setEActive] = useState(true);
+  const [eEmail, setEEmail] = useState("");
   const [busy, setBusy] = useState(false);
 
   function openEdit(u: U) {
@@ -28,15 +29,17 @@ export default function UsersAdmin({ users, groups }: { users: U[]; groups: Arra
     setERole(u.role as "employee" | "group_leader" | "admin");
     setEGroup(u.group_id ? String(u.group_id) : "");
     setEActive(u.active);
+    setEEmail(u.email ?? "");
   }
   async function save() {
     if (!edit || !eName.trim()) { alert("이름을 입력해 주세요."); return; }
+    if (!eEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(eEmail.trim())) { alert("올바른 이메일 형식으로 입력해 주세요. (예: name@company.com)"); return; }
     setBusy(true);
     try {
       const res = await fetch(`/api/admin/users/${edit.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: eName.trim(), role: eRole, groupId: eGroup ? Number(eGroup) : null, active: eActive }),
+        body: JSON.stringify({ name: eName.trim(), role: eRole, groupId: eGroup ? Number(eGroup) : null, active: eActive, email: eEmail.trim() }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || !d.ok) { alert(d.error ?? "수정에 실패했습니다."); return; }
@@ -103,6 +106,8 @@ export default function UsersAdmin({ users, groups }: { users: U[]; groups: Arra
             <div style={{ fontSize: 12, color: "#9AA1AE", marginBottom: 16 }} className="tnum">{edit.login_id}</div>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>이름</label>
             <input value={eName} onChange={(e) => setEName(e.target.value)} data-testid="admin-edit-name" style={inp} />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", margin: "14px 0 6px" }}>이메일</label>
+            <input value={eEmail} onChange={(e) => setEEmail(e.target.value)} type="email" inputMode="email" placeholder="예: name@company.com" data-testid="admin-edit-email" style={inp} />
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <div style={{ flex: 1 }}>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>소속 그룹</label>
