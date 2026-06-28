@@ -11,11 +11,31 @@ test("관리자 목록 승인 탭: 날짜 무관하게 승인 완료 보고서 �
   await page.getByRole("link", { name: /^승인/ }).click();
   await expect(page).toHaveURL(/tab=approved/);
 
-  // 승인 탭에선 날짜 picker 숨김(날짜 무관)
-  await expect(page.getByTestId("period-select")).toHaveCount(0);
+  // 승인 탭에선 날짜 필터(프리셋·조회기간) 숨김(날짜 무관)
+  await expect(page.getByTestId("date-range-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("date-presets")).toHaveCount(0);
   await expect(page.getByText("날짜와 관계없이")).toBeVisible();
 
   // 시드: 오세림(어제)·김서연(2일 전 v1) — 서로 다른 날짜의 승인 보고서가 함께 보인다
   await expect(page.getByTestId("mgr-row").filter({ hasText: "오세림" })).toContainText("승인");
   await expect(page.getByTestId("mgr-row").filter({ hasText: "김서연" })).toContainText("승인");
+});
+
+test("날짜 필터: 프리셋·조회기간 캘린더(디자인 v5.0.3 1:1)", async ({ page }) => {
+  await login(page, "park.sora");
+  await page.goto("/reports");
+  await expect(page.getByTestId("date-presets")).toBeVisible();
+  await expect(page.getByTestId("preset-today")).toHaveAttribute("aria-pressed", "true"); // 기본=오늘
+  await page.getByTestId("filter-bar").screenshot({ path: "/tmp/myfilter_bar.png" });
+
+  // 프리셋 '이번주' → from/to 범위 URL
+  await page.getByTestId("preset-thisweek").click();
+  await expect(page).toHaveURL(/from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}/);
+  await expect(page.getByTestId("preset-thisweek")).toHaveAttribute("aria-pressed", "true");
+
+  // 조회기간 두 달 캘린더 팝오버
+  await page.getByTestId("date-range-toggle").click();
+  await expect(page.getByTestId("date-range-popover")).toBeVisible();
+  await expect(page.getByTestId("cal-day").first()).toBeVisible();
+  await page.getByTestId("date-range-popover").screenshot({ path: "/tmp/myfilter_popover.png" });
 });

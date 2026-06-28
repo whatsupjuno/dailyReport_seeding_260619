@@ -95,6 +95,44 @@ export async function listScopeReportsByStatus(opts: {
   );
 }
 
+/**
+ * 관리자/그룹장 목록: [from,to] 기간에 '존재하는' 보고서를 날짜별 한 행씩(최근순).
+ * 단일-날짜 스냅샷(listScopeReports)과 달리 미작성 유령행은 만들지 않음 — 기간 조회용.
+ */
+export async function listScopeReportsRange(opts: {
+  groupIds: number[] | null;
+  from: string;
+  to: string;
+}): Promise<MgrRow[]> {
+  const params: unknown[] = [opts.from, opts.to];
+  let where = "u.active AND r.report_date BETWEEN $1 AND $2";
+  if (opts.groupIds != null) {
+    params.push(opts.groupIds);
+    where += ` AND u.group_id = ANY($${params.length}::bigint[])`;
+  }
+  return query<MgrRow>(
+    `SELECT u.id AS user_id, u.name, g.name AS dept,
+            r.id AS report_id, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+            r.status::text AS status,
+            r.submitted_at, COALESCE(r.is_vacation,false) AS is_vacation,
+            COALESCE(tc.total,0) AS total, COALESCE(tc.done,0) AS done, COALESCE(tc.delayed,0) AS delayed
+       FROM daily_reports r
+       JOIN users u ON u.id = r.user_id
+       LEFT JOIN groups g ON g.id = u.group_id
+       LEFT JOIN (
+         SELECT t.report_id, count(*) AS total,
+                count(*) FILTER (WHERE t.status='완결') AS done,
+                count(*) FILTER (WHERE t.status='지연') AS delayed
+           FROM tasks t LEFT JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind IS NULL OR s.kind <> 'plan'
+          GROUP BY t.report_id
+       ) tc ON tc.report_id = r.id
+      WHERE ${where}
+      ORDER BY r.report_date DESC, u.name`,
+    params,
+  );
+}
+
 export interface EmpRow {
   report_id: number;
   report_date: string;
@@ -125,6 +163,27 @@ export async function listMyReports(userId: number, limit = 30): Promise<EmpRow[
       ORDER BY r.report_date DESC
       LIMIT $2`,
     [userId, limit],
+  );
+}
+
+/** 직원 본인 보고서 — [from,to] 기간 한정(최근순). 날짜 범위 필터용. */
+export async function listMyReportsRange(userId: number, from: string, to: string): Promise<EmpRow[]> {
+  return query<EmpRow>(
+    `SELECT r.id AS report_id, to_char(r.report_date,'YYYY-MM-DD') AS report_date,
+            r.status, r.submitted_at, r.is_vacation,
+            COALESCE(tc.total,0) AS total, COALESCE(tc.done,0) AS done, COALESCE(tc.delayed,0) AS delayed
+       FROM daily_reports r
+       LEFT JOIN (
+         SELECT t.report_id, count(*) AS total,
+                count(*) FILTER (WHERE t.status='완결') AS done,
+                count(*) FILTER (WHERE t.status='지연') AS delayed
+           FROM tasks t LEFT JOIN report_sections s ON s.id=t.section_id
+          WHERE s.kind IS NULL OR s.kind <> 'plan'
+          GROUP BY t.report_id
+       ) tc ON tc.report_id = r.id
+      WHERE r.user_id = $1 AND r.report_date BETWEEN $2 AND $3
+      ORDER BY r.report_date DESC`,
+    [userId, from, to],
   );
 }
 

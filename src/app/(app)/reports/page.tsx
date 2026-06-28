@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/guard";
-import { listMyReports, listScopeReports, listScopeReportsByStatus, listLedGroupIds, type MgrRow } from "@/lib/data/list";
+import { listMyReports, listMyReportsRange, listScopeReports, listScopeReportsRange, listScopeReportsByStatus, listLedGroupIds, type MgrRow } from "@/lib/data/list";
 import { listGroupOptions } from "@/lib/data/admin";
 import { userHasOtherReviewer } from "@/lib/data/review";
 import FilterBar from "./FilterBar";
@@ -11,10 +11,6 @@ function timeOf(ts: string | null): string {
   if (!ts) return "—";
   return new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ts));
 }
-function validDate(s: string | undefined): string {
-  return s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s + "T00:00:00Z")) ? s : todayKstISO();
-}
-
 function Bar({ done, total }: { done: number; total: number }) {
   if (total === 0) return <span style={{ color: "#CBD0D9" }}>—</span>;
   const pct = Math.round((done / total) * 100);
@@ -32,13 +28,21 @@ function Badge({ label }: { label: string }) {
   return <span style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{label}</span>;
 }
 
-type SP = Promise<{ tab?: string; q?: string; group?: string; date?: string; page?: string }>;
+type SP = Promise<{ tab?: string; q?: string; group?: string; date?: string; from?: string; to?: string; page?: string }>;
+
+const isISO = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s + "T00:00:00Z"));
 
 export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const user = await requireUser();
   const isManager = user.role === "group_leader" || user.role === "admin";
-  const date = validDate(sp.date);
+  const today = todayKstISO();
+  // 날짜 범위 from~to. 구버전 ?date= 도 호환. 기본값=오늘(today~today). from>to면 스왑.
+  const f0 = isISO(sp.from) ? sp.from : isISO(sp.date) ? sp.date : today;
+  const t0 = isISO(sp.to) ? sp.to : isISO(sp.date) ? sp.date : f0;
+  const from = f0 <= t0 ? f0 : t0;
+  const to = f0 <= t0 ? t0 : f0;
+  const isSingleDay = from === to;
   const q = (sp.q ?? "").trim();
   const tab = sp.tab ?? "all";
 
@@ -46,7 +50,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
     // admin: 전체(또는 필터). group_leader: 자신이 그룹장인 모든 그룹(복수 그룹장 지원).
     const groupIds = user.role === "admin" ? (sp.group ? [Number(sp.group)] : null) : await listLedGroupIds(user.id);
     const groups = user.role === "admin" ? await listGroupOptions() : [];
-    const all = await listScopeReports({ groupIds, date });
+    const all = isSingleDay
+      ? await listScopeReports({ groupIds, date: from }) // 단일일: 스냅샷(미작성 포함, KPI용)
+      : await listScopeReportsRange({ groupIds, from, to }); // 여러 날: 존재하는 보고서만
     // '승인' 탭은 날짜 무관(최근 누적) — 과거에 검수 완료(승인)한 보고서도 목록에서 볼 수 있게.
     const approvedAll = await listScopeReportsByStatus({ groupIds, statuses: ["승인"], limit: 300 });
     const isApprovedView = tab === "approved";
@@ -72,7 +78,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
       { k: "rejected", label: "반려", n: cnt((r) => r.status === "반려") },
       { k: "approved", label: "승인", n: approvedAll.length },
     ];
-    const qs = (k: string, pg = 1) => `?tab=${k}&date=${date}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.group ? `&group=${sp.group}` : ""}`;
+    const qs = (k: string, pg = 1) => `?tab=${k}&from=${from}&to=${to}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.group ? `&group=${sp.group}` : ""}`;
 
     // KPI 집계
     const totalN = all.length;
@@ -94,12 +100,6 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE));
     const page = Math.min(Math.max(1, Number(sp.page ?? "1") || 1), pageCount);
     const rows = filtered.slice((page - 1) * PAGE, page * PAGE);
-
-    // 기간 프리셋(최근 14일 — 단일 날짜 백엔드 호환)
-    const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-    const tISO = todayKstISO();
-    const datePresets = Array.from({ length: 14 }, (_, i) => addDays(tISO, -i)).map((v) => ({ value: v, label: v === tISO ? "오늘" : v === addDays(tISO, -1) ? "어제" : `${shortDate(v)} (${weekday(v)})` }));
-    if (!datePresets.some((d) => d.value === date)) datePresets.unshift({ value: date, label: `${shortDate(date)} (${weekday(date)})` });
 
     const reviewCell = (status: string) => {
       const m: Record<string, [string, string, string]> = { 검수대기: ["대기", "#B7860B", "#FBF4DA"], 승인: ["승인", "#1F7A46", "#E7F5EC"], 반려: ["반려", "#B91C1C", "#FCEBEB"], 계획제출: ["계획", "#2563EB", "#E6EEFD"] };
@@ -138,7 +138,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
               );
             })}
           </div>
-          <FilterBar tab={tab} date={date} q={q} group={sp.group ?? ""} isAdmin={user.role === "admin"} groups={groups} datePresets={datePresets} hideDate={isApprovedView} />
+          <FilterBar tab={tab} from={from} to={to} q={q} group={sp.group ?? ""} isAdmin={user.role === "admin"} groups={groups} today={today} hideDate={isApprovedView} />
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }} data-testid="mgr-table">
             <thead><tr style={{ background: "#F7F8FA", borderTop: "1px solid #E2E5EB" }}>
@@ -149,7 +149,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
                 const isOwn = r.user_id === user.id;
                 const pending = r.status === "검수대기";
                 const review = pending && (!isOwn || selfReviewAllowed);
-                const rowDate = r.report_date ?? date;
+                const rowDate = r.report_date ?? from;
                 const href = isOwn && !review ? `/report/${rowDate}` : `/review/${r.report_id}`;
                 return (
                 <tr key={r.user_id} style={{ borderTop: "1px solid #E2E5EB" }} data-testid="mgr-row">
@@ -191,7 +191,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
   }
 
   // 직원 뷰
-  const allMine = await listMyReports(user.id);
+  const allMine = await listMyReports(user.id); // 반려 배너(최근 전체 기준 — 날짜필터와 무관하게 놓치지 않도록)
+  const myRange = await listMyReportsRange(user.id, from, to); // 기간 내 보고서(목록·탭 카운트)
   const matchTab = (s: string) => {
     switch (tab) {
       case "draft": return s === "작성중" || s === "미작성";
@@ -202,28 +203,23 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
     }
   };
   const tabs = [
-    { k: "all", label: "전체", n: allMine.length },
-    { k: "draft", label: "작성중", n: allMine.filter((r) => r.status === "작성중" || r.status === "미작성").length },
-    { k: "submitted", label: "제출완료", n: allMine.filter((r) => ["검수대기", "제출완료", "재제출"].includes(r.status)).length },
-    { k: "rejected", label: "반려", n: allMine.filter((r) => r.status === "반려").length },
-    { k: "approved", label: "승인", n: allMine.filter((r) => r.status === "승인").length },
+    { k: "all", label: "전체", n: myRange.length },
+    { k: "draft", label: "작성중", n: myRange.filter((r) => r.status === "작성중" || r.status === "미작성").length },
+    { k: "submitted", label: "제출완료", n: myRange.filter((r) => ["검수대기", "제출완료", "재제출"].includes(r.status)).length },
+    { k: "rejected", label: "반려", n: myRange.filter((r) => r.status === "반려").length },
+    { k: "approved", label: "승인", n: myRange.filter((r) => r.status === "승인").length },
   ];
   const rejectedN = allMine.filter((r) => r.status === "반려").length;
 
-  const empFiltered = allMine
+  const empFiltered = myRange
     .filter((r) => matchTab(r.status))
-    .filter((r) => r.report_date <= date)
     .filter((r) => !q || `${shortDate(r.report_date)} ${weekday(r.report_date)} ${r.status}`.includes(q));
   const PAGE = 12;
   const empPageCount = Math.max(1, Math.ceil(empFiltered.length / PAGE));
   const page = Math.min(Math.max(1, Number(sp.page ?? "1") || 1), empPageCount);
   const rows = empFiltered.slice((page - 1) * PAGE, page * PAGE);
 
-  const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-  const tISO = todayKstISO();
-  const datePresets = Array.from({ length: 14 }, (_, i) => addDays(tISO, -i)).map((v) => ({ value: v, label: v === tISO ? "오늘" : v === addDays(tISO, -1) ? "어제" : `${shortDate(v)} (${weekday(v)})` }));
-  if (!datePresets.some((d) => d.value === date)) datePresets.unshift({ value: date, label: `${shortDate(date)} (${weekday(date)})` });
-  const qs = (k: string, pg = 1) => `?tab=${k}&date=${date}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+  const qs = (k: string, pg = 1) => `?tab=${k}&from=${from}&to=${to}&page=${pg}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
   const reviewCell = (status: string) => {
     const m: Record<string, [string, string, string]> = { 검수대기: ["대기", "#B7860B", "#FBF4DA"], 승인: ["승인", "#1F7A46", "#E7F5EC"], 반려: ["반려", "#B91C1C", "#FCEBEB"], 계획제출: ["계획", "#2563EB", "#E6EEFD"] };
     const v = m[status];
@@ -253,7 +249,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
             );
           })}
         </div>
-        <FilterBar tab={tab} date={date} q={q} group="" isAdmin={false} groups={[]} datePresets={datePresets} />
+        <FilterBar tab={tab} from={from} to={to} q={q} group="" isAdmin={false} groups={[]} today={today} />
         <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }} data-testid="emp-table">
           <thead><tr style={{ background: "#F7F8FA", borderTop: "1px solid #E2E5EB" }}>{["날짜", "상태", "검수", "완결율", "지연", "제출시각"].map((h) => <th key={h} style={{ textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", padding: "11px 16px" }}>{h}</th>)}</tr></thead>
