@@ -2,6 +2,11 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { monthDayKo, todayKstISO } from "@/lib/date";
+
+// 운영 빌드에선 개발 전용 OTP 노출('인증번호 받기'/devOtp)을 숨긴다(고정 코드 운영).
+// process.env.NODE_ENV는 클라이언트 번들에 빌드타임 치환됨.
+const IS_DEV = process.env.NODE_ENV !== "production";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,9 +17,13 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
+  // 로그인 후 이동 대상(오늘 KST 보고서)과 동일한 날짜를 배너에 표시. 리다이렉트는 /api/auth/login의 todayKstISO()와 일치.
+  const [bannerDate] = useState(() => monthDayKo(todayKstISO()));
 
   const otpStr = otp.join("");
   const ready = loginId.trim().length > 0 && otpStr.length === 4;
+  // 에러 시 아이디 입력 빨간 테두리: 아이디가 비었거나 '존재하지 않는 아이디' 오류일 때(디자인 idBorder).
+  const idInvalid = !!error && (loginId.trim() === "" || error.includes("존재하지 않는 아이디"));
 
   function setDigit(i: number, v: string) {
     const digits = v.replace(/\D/g, "");
@@ -136,9 +145,33 @@ export default function LoginPage() {
             아이디와 인증번호 4자리를 입력해 주세요.
           </div>
 
+          {/* 로그인 후 이동 안내 배너(파란 left-border 카드) */}
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "flex-start",
+              background: "#EEF2FF",
+              borderLeft: "3px solid #3B5BDB",
+              borderRadius: 8,
+              padding: "12px 14px",
+              marginBottom: 22,
+            }}
+            data-testid="login-banner"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" style={{ flex: "none", marginTop: 1 }} aria-hidden>
+              <circle cx="10" cy="10" r="8" stroke="#3B5BDB" strokeWidth="1.5" />
+              <path d="M10 9v5M10 6.2v.2" stroke="#3B5BDB" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            <div style={{ fontSize: 13, lineHeight: "19px", color: "#2F49B0" }}>
+              로그인하면 <strong style={{ fontWeight: 700 }} suppressHydrationWarning>{bannerDate} 업무 보고서</strong>로 바로 이동합니다.
+            </div>
+          </div>
+
           {error && (
             <div
               role="alert"
+              aria-live="assertive"
               style={{
                 display: "flex",
                 gap: 8,
@@ -150,6 +183,10 @@ export default function LoginPage() {
                 marginBottom: 18,
               }}
             >
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" style={{ flex: "none", marginTop: 1 }} aria-hidden>
+                <path d="M10 2.5 18 17H2L10 2.5Z" stroke="#DC2626" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M10 8v3.5M10 14v.2" stroke="#DC2626" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
               <span style={{ fontSize: 13, lineHeight: "19px", color: "#DC2626", fontWeight: 600 }}>
                 {error}
               </span>
@@ -173,10 +210,11 @@ export default function LoginPage() {
               }}
               autoComplete="username"
               placeholder="사번 또는 아이디 입력"
+              className="login-id-input"
               style={{
                 width: "100%",
                 height: 48,
-                border: "1px solid #CBD0D9",
+                border: `1px solid ${idInvalid ? "#DC2626" : "#CBD0D9"}`,
                 borderRadius: 8,
                 padding: "0 12px",
                 fontFamily: "inherit",
@@ -198,22 +236,26 @@ export default function LoginPage() {
               <label style={{ fontSize: 14, fontWeight: 600 }}>
                 인증번호 <span style={{ color: "#DC2626" }}>*</span>
               </label>
-              <button
-                type="button"
-                onClick={requestOtp}
-                disabled={loading}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "#3B5BDB",
-                }}
-              >
-                {sent ? "인증번호 다시 보기" : "인증번호 받기"}
-              </button>
+              {IS_DEV ? (
+                <button
+                  type="button"
+                  onClick={requestOtp}
+                  disabled={loading}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#3B5BDB",
+                  }}
+                >
+                  {sent ? "인증번호 다시 보기" : "인증번호 받기"}
+                </button>
+              ) : (
+                <span style={{ fontSize: 12, color: "#6B7280" }}>관리자에게 발급받은 4자리</span>
+              )}
             </div>
             <div role="group" aria-label="인증번호 4자리" style={{ display: "flex", gap: 10 }}>
               {otp.map((d, i) => (
@@ -228,7 +270,7 @@ export default function LoginPage() {
                   onChange={(e) => setDigit(i, e.target.value)}
                   onKeyDown={(e) => onKey(i, e)}
                   aria-label={`인증번호 ${i + 1}번째 자리`}
-                  className="tnum"
+                  className="tnum otp-box"
                   style={{
                     width: "100%",
                     height: 56,
@@ -269,10 +311,29 @@ export default function LoginPage() {
               fontFamily: "inherit",
               fontSize: 14,
               fontWeight: 600,
-              cursor: loading ? "wait" : "pointer",
+              cursor: loading ? "wait" : ready ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              transition: "background .15s ease",
             }}
           >
-            {loading ? "처리 중…" : "로그인"}
+            {loading && (
+              <span
+                aria-hidden
+                style={{
+                  width: 16,
+                  height: 16,
+                  border: "2px solid rgba(255,255,255,.5)",
+                  borderTopColor: "#fff",
+                  borderRadius: 9999,
+                  display: "inline-block",
+                  animation: "spin .7s linear infinite",
+                }}
+              />
+            )}
+            {loading ? "로그인 중…" : "로그인"}
           </button>
 
           <div
@@ -285,6 +346,11 @@ export default function LoginPage() {
             }}
           >
             인증번호는 관리자에게 발급받은 고정 코드입니다. (OTP 자동 발급은 추후 제공)
+          </div>
+          <div style={{ textAlign: "center", marginTop: 8 }}>
+            <span style={{ fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: "#3B5BDB" }}>
+              로그인이 어려우신가요? 관리자에게 문의하세요.
+            </span>
           </div>
         </div>
         <div style={{ textAlign: "center", fontSize: 12, color: "#9AA1AE", marginTop: 20 }}>
