@@ -70,6 +70,8 @@ export interface ReportView {
   recentTasks: Array<{ name: string; project: string | null; planned: number | null }>;
   // 직전 보고서의 미완료 업무 중 아직 안 가져온 후보(‘미완료 업무 불러오기’ 팝업)
   carryoverCandidates: Array<{ id: number; project: string | null; title: string }>;
+  // 관리에서 등록한 보관 제외 프로젝트명(작성 드롭다운 제안). 자유 텍스트 입력은 병행 유지(B2).
+  projectOptions: string[];
 }
 
 const VAC_TYPES = ["연차", "반차", "병가", "공가", "휴직", "기타"];
@@ -741,8 +743,15 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 ) : (
                   <div style={{ border: "1px solid #CBD0D9", borderRadius: 10, background: "#FBFCFD", padding: 14, marginTop: 12 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>업무 추가</div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>프로젝트명 <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(선택)</span></label>
-                    <input value={project} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} onFocus={() => setSuggestOpen(true)} data-testid="add-project" placeholder="프로젝트명을 입력하면 최근 업무를 불러올 수 있어요" style={inp} />
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>프로젝트 <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(선택)</span></label>
+                    {/* 관리에서 등록한 보관 제외 프로젝트 제안(드롭다운) + 자유 텍스트 입력 병행(B2) */}
+                    {view.projectOptions.length > 0 && (
+                      <select value={view.projectOptions.includes(project) ? project : ""} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} data-testid="add-project-select" style={{ ...inp, padding: "0 10px", color: "#3A4150", background: "#fff", cursor: "pointer", marginBottom: 8 }}>
+                        <option value="">프로젝트 선택</option>
+                        {view.projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    )}
+                    <input value={project} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} onFocus={() => setSuggestOpen(true)} data-testid="add-project" placeholder={view.projectOptions.length > 0 ? "또는 프로젝트명 직접 입력 (최근 업무 불러오기)" : "프로젝트명을 입력하면 최근 업무를 불러올 수 있어요"} style={inp} />
                     {filteredRecent.length > 0 && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }} data-testid="recent-chips">
                         {filteredRecent.map((s, i) => (
