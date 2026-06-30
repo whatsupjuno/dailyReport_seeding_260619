@@ -17,6 +17,7 @@ import { attachmentsByReport, commAttachmentsByReport } from "@/lib/data/attachm
 import { commentMetaForReport } from "@/lib/data/comments";
 import { taskRejectionMap } from "@/lib/data/task-rejections";
 import { listCarryoverCandidates } from "@/lib/data/report-mutations";
+import { listActiveProjectNames } from "@/lib/data/projects";
 import { computeWriteMode } from "@/lib/domain/mode";
 import { isV2Report } from "@/lib/domain/config";
 import { formatKoreanDate, todayKstISO, reportDateForBoundary, kstHm } from "@/lib/date";
@@ -79,13 +80,14 @@ export default async function ReportPage({
     return <LegacyReportEditor view={buildLegacyView(full, date)} />;
   }
 
-  const [attachments, recentTasks, commentMeta, rejectMap, commAtt, carryoverCandidates] = await Promise.all([
+  const [attachments, recentTasks, commentMeta, rejectMap, commAtt, carryoverCandidates, projectOptions] = await Promise.all([
     attachmentsByReport(reportId),
     recentTaskSuggestions(user.id),
     commentMetaForReport(reportId, user.id),
     taskRejectionMap(reportId),
     commAttachmentsByReport(reportId),
     listCarryoverCandidates(reportId),
+    listActiveProjectNames(), // 작성 화면 프로젝트 드롭다운(보관 제외). 자유 텍스트 입력은 병행 유지(B2).
   ]);
   const commAttMap = new Map<number, Array<{ id: number; fileName: string | null; url: string | null; comment: string | null }>>();
   for (const a of commAtt) {
@@ -167,6 +169,7 @@ export default async function ReportPage({
     })),
     recentTasks,
     carryoverCandidates,
+    projectOptions,
   };
 
   return <ReportEditor view={view} />;

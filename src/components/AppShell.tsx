@@ -26,7 +26,13 @@ export default function AppShell({ user, children }: { user: ShellUser; children
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
 
   const items = NAV.filter((n) => !("roles" in n) || (n.roles as readonly string[]).includes(user.role));
-  const adminSub = [{ href: "/admin/users", label: "사용자 관리" }, { href: "/admin/groups", label: "그룹 관리" }];
+  const adminSub = [
+    { href: "/admin/users", label: "사용자 관리" },
+    { href: "/admin/groups", label: "그룹 관리" },
+    { href: "/admin/projects", label: "프로젝트 관리" },
+  ];
+  // 관리 하위메뉴 '메뉴' 라벨 스타일(디자인: 굵게·자간 정렬). LNB·드로어 공통.
+  const subMenuLabelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", color: "#9AA1AE" };
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -174,7 +180,7 @@ export default function AppShell({ user, children }: { user: ShellUser; children
             })}
             {user.role === "admin" && pathname.startsWith("/admin") && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#9AA1AE", padding: "4px 12px" }}>메뉴</div>
+                <div style={{ ...subMenuLabelStyle, padding: "4px 12px" }}>메뉴</div>
                 {adminSub.map((s) => {
                   const on = active(s.href);
                   return (
@@ -228,8 +234,8 @@ export default function AppShell({ user, children }: { user: ShellUser; children
             {/* 관리 하위 메뉴(사용자 관리 / 그룹 관리) — 디자인 사이드바 '메뉴' 섹션 */}
             {user.role === "admin" && pathname.startsWith("/admin") && (
               <div style={{ marginTop: 14 }} data-testid="admin-submenu">
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#9AA1AE", padding: "4px 10px" }}>메뉴</div>
-                {[{ href: "/admin/users", label: "사용자 관리" }, { href: "/admin/groups", label: "그룹 관리" }].map((s) => {
+                <div style={{ ...subMenuLabelStyle, padding: "4px 10px" }}>메뉴</div>
+                {adminSub.map((s) => {
                   const on = active(s.href);
                   return (
                     <Link key={s.href} href={s.href} style={{ display: "block", textDecoration: "none", fontSize: 13, fontWeight: 600, padding: "8px 10px", borderRadius: 8, background: on ? "#EEF2FF" : "transparent", color: on ? "#2F49B0" : "#6B7280" }}>{s.label}</Link>
