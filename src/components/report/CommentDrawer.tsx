@@ -144,10 +144,10 @@ export default function CommentDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
-  // @멘션 멤버(실제 조직 사용자) 1회 로드
+  // @멘션 멤버(해당 업무 댓글 열람권자) 로드
   useEffect(() => {
     let alive = true;
-    fetch(`/api/comments/members`)
+    fetch(`/api/comments/members?taskId=${task.id}`)
       .then((r) => r.json())
       .then((d) => {
         if (alive && d.ok) setMembers(d.members ?? []);
@@ -156,7 +156,7 @@ export default function CommentDrawer({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [task.id]);
 
   // ESC로 닫기(브리프 §9)
   useEffect(() => {
