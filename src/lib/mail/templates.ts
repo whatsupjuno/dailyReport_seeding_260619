@@ -135,6 +135,60 @@ export function resubmitReviewEmail(to: string, toName: string, authorName: stri
   };
 }
 
+// ===== 댓글 알림(v5.0.15) — 댓글/대댓글/@멘션 =====
+
+export type CommentNotifyKind = "comment" | "comment_reply" | "comment_mention";
+
+/**
+ * 댓글/대댓글/멘션 알림 메일. 본문에 업무 제목·작성자·댓글 일부(발췌)·해당 보고서 링크 포함.
+ * - comment        : 최상위 댓글이 스레드 상대편(보고서 owner ↔ 검수자)에게
+ * - comment_reply  : 대댓글이 스레드 참여자(부모 댓글 author·보고서 owner)에게
+ * - comment_mention: @멘션이 언급된 사용자에게(멘션 우선)
+ * excerpt = 댓글 본문 일부(서버에서 잘라 전달). link = 수신자 기준 /report 또는 /review.
+ */
+export function commentEmail(
+  to: string,
+  toName: string,
+  kind: CommentNotifyKind,
+  authorName: string,
+  taskTitle: string,
+  excerpt: string,
+  link: string,
+): MailMessage {
+  const title: Record<CommentNotifyKind, string> = {
+    comment: "업무에 새 댓글이 달렸어요",
+    comment_reply: "내 댓글에 답글이 달렸어요",
+    comment_mention: "댓글에서 회원님을 언급했어요",
+  };
+  const intro: Record<CommentNotifyKind, string> = {
+    comment: `<b>${escapeHtml(authorName)}</b>님이 <b>${escapeHtml(taskTitle)}</b> 업무에 댓글을 남겼어요.`,
+    comment_reply: `<b>${escapeHtml(authorName)}</b>님이 <b>${escapeHtml(taskTitle)}</b> 업무의 댓글에 답글을 남겼어요.`,
+    comment_mention: `<b>${escapeHtml(authorName)}</b>님이 <b>${escapeHtml(taskTitle)}</b> 업무 댓글에서 회원님을 언급했어요.`,
+  };
+  const label: Record<CommentNotifyKind, string> = {
+    comment: "댓글 보기",
+    comment_reply: "답글 보기",
+    comment_mention: "댓글 보기",
+  };
+  const subject: Record<CommentNotifyKind, string> = {
+    comment: `[Seeding] ${authorName}님이 '${taskTitle}' 업무에 댓글을 남겼습니다`,
+    comment_reply: `[Seeding] ${authorName}님이 '${taskTitle}' 댓글에 답글을 남겼습니다`,
+    comment_mention: `[Seeding] ${authorName}님이 '${taskTitle}' 댓글에서 회원님을 언급했습니다`,
+  };
+  return {
+    to,
+    toName,
+    kind,
+    subject: subject[kind],
+    html: wrap(
+      title[kind],
+      `<p style="font-size:14px;color:#3a4150">${intro[kind]}</p>
+       <div style="font-size:13px;color:#3a4150;background:#f7f8fa;border:1px solid #e2e5eb;border-radius:8px;padding:12px 14px;margin:12px 0;white-space:pre-wrap">${escapeHtml(excerpt)}</div>
+       ${button(link, label[kind])}`,
+    ),
+  };
+}
+
 /** 1차 계획 제출 → 그룹장(계획 컨펌/계획 반려 안내). */
 export function planReviewRequestEmail(to: string, toName: string, authorName: string, link: string): MailMessage {
   return {

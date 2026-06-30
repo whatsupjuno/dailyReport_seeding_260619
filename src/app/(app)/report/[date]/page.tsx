@@ -124,6 +124,7 @@ export default async function ReportPage({
     rejectComment: rejectMap.get(t.id)?.comment ?? null,
     commentCount: commentMeta.get(t.id)?.count ?? 0,
     commentUnread: commentMeta.get(t.id)?.unread ?? false,
+    commentLeaderUnread: commentMeta.get(t.id)?.leaderUnread ?? false,
     attachments: attMap.get(t.id) ?? [],
   });
   const roleLabel = user.role === "admin" ? "관리자" : user.role === "group_leader" ? "그룹장" : "직원";

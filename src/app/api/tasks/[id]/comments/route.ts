@@ -6,6 +6,7 @@ import {
   listComments,
   markCommentsRead,
 } from "@/lib/data/comments";
+import { notifyComment } from "@/lib/mail/notify";
 
 const ROLE_LABEL: Record<string, string> = {
   employee: "직원",
@@ -37,6 +38,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       body: c.body,
       at: c.created_at,
       me: c.author_user_id === user.id,
+      edited: c.edited,
+      deleted: c.deleted,
+      deletedAt: c.deleted_at,
     })),
   });
 }
@@ -63,6 +67,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     const res = await addComment(taskId, user.id, user.role, body.body, parentId);
+    // 댓글/대댓글/@멘션 → 수신자에게 즉시 알림(승인/반려 즉시발송 미러링). best-effort(메일 실패가 저장을 막지 않음).
+    await notifyComment({
+      taskId,
+      reportId: res.reportId,
+      authorId: user.id,
+      body: body.body,
+      isReply: parentId != null,
+      parentAuthorId: res.parentAuthorId,
+      mentions: res.mentions,
+    });
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {
     const m = (e as Error).message;
