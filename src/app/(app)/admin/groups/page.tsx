@@ -16,7 +16,7 @@ export default async function AdminGroupsPage() {
         groups={groups}
         users={users
           .filter((u) => u.active)
-          .map((u) => ({ id: u.id, name: u.name, login_id: u.login_id, group_id: u.group_id, group_name: u.group_name ?? null }))}
+          .map((u) => ({ id: u.id, name: u.name, login_id: u.login_id, role: u.role, group_id: u.group_id, group_name: u.group_name ?? null }))}
       />
     </div>
   );

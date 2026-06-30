@@ -47,6 +47,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (m === "NAME_REQUIRED") return badRequest("그룹명을 입력해 주세요.");
     if (m === "NOT_FOUND") return badRequest("그룹을 찾을 수 없습니다.");
     if (m === "LEADER_NOT_ACTIVE") return badRequest("비활성 사용자는 그룹장으로 지정할 수 없습니다.");
+    if (m === "LEADER_NOT_ASSIGNABLE") return badRequest("그룹장은 관리자 또는 그룹장 역할 사용자만 지정할 수 있습니다.");
     throw e;
   }
 }

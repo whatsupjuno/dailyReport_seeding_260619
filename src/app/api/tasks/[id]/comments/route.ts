@@ -56,11 +56,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!access) return forbidden();
   if (!access.canWrite) return forbidden();
 
-  const body = (await req.json().catch(() => ({}))) as { body?: string; parentId?: number };
-  if (!body.body?.trim()) return badRequest("댓글을 입력해 주세요.");
+  const body = (await req.json().catch(() => ({}))) as { body?: unknown; parentId?: unknown };
+  if (typeof body.body !== "string" || !body.body.trim()) return badRequest("댓글을 입력해 주세요.");
   let parentId: number | null = null;
   if (body.parentId != null) {
-    if (!Number.isSafeInteger(body.parentId) || body.parentId <= 0)
+    if (typeof body.parentId !== "number" || !Number.isSafeInteger(body.parentId) || body.parentId <= 0)
       return badRequest("잘못된 답글 대상입니다.");
     parentId = body.parentId;
   }

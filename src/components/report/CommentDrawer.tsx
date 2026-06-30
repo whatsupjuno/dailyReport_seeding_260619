@@ -113,7 +113,10 @@ export default function CommentDrawer({
   const [mentionFor, setMentionFor] = useState<MentionCtx | null>(null);
   const [mentionQuery, setMentionQuery] = useState("");
 
-  const canMutate = role !== "관리자"; // 관리자 읽기전용(브리프 §권한)
+  // 작성/답글/수정/삭제 권한 = 서버 canWrite(작성자·검수권자=true, 순수 관리자=false)와 일치시킨다.
+  // role 라벨(=="관리자")로 막으면 검수권자인 관리자(그룹장 겸 admin 등)는 composer(=canWrite 기준)는
+  // 보이는데 post가 조용히 막혀 "등록 무반응"이 된다(2026-06-30 버그). canWrite 단일 기준으로 통일.
+  const canMutate = canWrite;
 
   async function refetch() {
     const list = await fetch(`/api/tasks/${task.id}/comments`).then((r) => r.json());

@@ -260,10 +260,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   }
 
   const mode = view.mode;
-  const reviewMode = mode === "review"; // 검수대기: 편집 가능·재제출 없음(제출 버튼 숨김)
-  const readOnly = mode === "view"; // 최종 잠금(승인/제출완료/재제출)만 읽기전용. review는 편집 가능.
+  const readOnly = mode === "view" || view.status === "검수대기"; // 검수대기부터 제출본 잠금.
   const isWork = mode === "work" && !vacationMode;
-  const submitted = mode === "view" || mode === "review"; // 스테퍼/배지: 제출됨 표시
+  const submitted = mode === "view" || view.status === "검수대기"; // 스테퍼/배지: 제출됨 표시
 
   // 헤더 인디케이터: '마감까지 N'(작성 중일 때) + '저장됨 · 시각'
   let deadlineLabel: string | null = null;
@@ -286,7 +285,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
     : view.am.length + view.pm.length + view.night.filter((t) => t.status === "완결" || t.status === "지연").length;
   // 미수정 행 반려 수(반려 모드 재제출 경고용)
   const openRejects = [...view.todo, ...view.am, ...view.pm, ...view.night].filter((t) => t.rejectState === "반려").length;
-  const primaryLabel = vacationMode
+  const primaryLabel = readOnly
+    ? ""
+    : vacationMode
     ? vacType === "휴직"
       ? "휴직으로 제출"
       : "휴가로 제출"
@@ -659,8 +660,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           let banner: { icon: string; title: string; sub: string; bg: string; line: string; fg: string } | null = null;
           if (mode === "rejected")
             banner = { icon: "↩", title: "그룹장이 보고서를 반려했습니다.", sub: rejectComment ? `그룹장 코멘트: ${rejectComment}` : "반려된 업무만 수정·재마감한 뒤 다시 제출해 주세요.", bg: "#FCEBEB", line: "#F5C2C2", fg: "#B91C1C" };
-          else if (mode === "review")
-            banner = { icon: "⧗", title: "검수 대기 중입니다 — 승인 전까지 수정할 수 있어요.", sub: "수정 내용은 자동 저장됩니다. 다시 제출할 필요 없이 검수자가 최신본을 확인합니다.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
+          else if (view.status === "검수대기")
+            banner = { icon: "⧗", title: "검수 대기 중입니다.", sub: "제출된 보고서는 읽기 전용입니다. 수정이 필요하면 검수자에게 반려를 요청해 주세요.", bg: "#FBF4DA", line: "#EFE0A6", fg: "#8A6508" };
           else if (mode === "view")
             banner = { icon: "✓", title: view.status === "승인" ? "승인 완료된 보고서입니다." : "제출 완료된 보고서입니다.", sub: "최종 처리되어 읽기 전용입니다. 수정이 필요하면 검수자에게 반려를 요청해 주세요.", bg: "#E7F6EC", line: "#BBE5C8", fg: "#1F7A46" };
           else if (view.status === "계획제출")
@@ -681,12 +682,12 @@ export default function ReportEditor({ view }: { view: ReportView }) {
         {vacationMode ? (
           <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, padding: 22, marginBottom: 16, boxShadow: "0 1px 3px rgba(16,24,40,.08)" }} data-testid="vacation-card">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>오늘은 휴가로 처리할까요?</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{readOnly ? "휴가 보고가 제출되었습니다." : "오늘은 휴가로 처리할까요?"}</div>
               {!readOnly && (
                 <button onClick={() => setVacationMode(false)} data-testid="exit-vacation" style={btnGhost}>← 업무 작성으로</button>
               )}
             </div>
-            <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 16 }}>휴가 유형과 사유만 입력하면 됩니다.</div>
+            <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 16 }}>{readOnly ? "검수 대기 상태라 읽기 전용입니다." : "휴가 유형과 사유만 입력하면 됩니다."}</div>
 
             <label style={{ display: "block", fontSize: 14, fontWeight: 600, marginBottom: 7 }}>유형 <span style={{ color: "#DC2626" }}>*</span></label>
             <select value={vacType} disabled={readOnly} onChange={(e) => onChangeVacType(e.target.value)} data-testid="vac-type" style={{ width: "100%", maxWidth: 240, height: 44, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 12px", fontFamily: "inherit", fontSize: 14, color: "#3A4150", background: "#fff", marginBottom: 18, outline: "none" }}>
@@ -708,8 +709,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
           </div>
         ) : (
           <>
-            {/* 오늘 할 일 (work 모드) + 반려 모드 + 검수대기(review, 승인 전 수정) */}
-            {(isWork || mode === "rejected" || reviewMode) && (
+            {/* 오늘 할 일 (work 모드) + 반려 모드 */}
+            {(isWork || mode === "rejected") && (
               <div style={{ background: "#fff", border: "1px solid #E2E5EB", borderLeft: `3px solid ${mode === "rejected" ? "#DC2626" : "#3B5BDB"}`, borderRadius: 12, padding: "16px 20px", marginBottom: 16, boxShadow: "0 1px 3px rgba(16,24,40,.08)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: mode === "rejected" ? "#B91C1C" : "#3B5BDB", background: mode === "rejected" ? "#FCEBEB" : "#EEF2FF", padding: "3px 9px", borderRadius: 9999 }}>{mode === "rejected" ? "보고서 수정" : "오늘 할 일"}</span>
@@ -721,7 +722,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 {/* 미완료 리스트 */}
                 <div style={{ marginTop: 8 }}>
                   {todoRows.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} projCust={projCust}reorderable={todoRows.length > 1 && !reviewMode} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
+                    <TaskRow key={t.id} t={t} busy={busy} projCust={projCust}reorderable={todoRows.length > 1} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
                   ))}
                   {view.todo.length === 0 && (
                     <div style={{ textAlign: "center", padding: "22px 0" }}>
@@ -833,8 +834,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
               </div>
             )}
 
-            {/* 제출 후(view) 읽기 전용: 미완료(할 일) 행도 보이게. 반려 모드는 위 편집 카드에서 처리 */}
-            {mode === "view" && view.todo.length > 0 && (
+            {/* 제출 후 읽기 전용: 미완료(할 일) 행도 보이게. 반려 모드는 위 편집 카드에서 처리 */}
+            {readOnly && view.todo.length > 0 && (
               <div data-testid="todo-readonly" style={{ background: "#fff", border: "1px solid #E2E5EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#FAFBFC" }}>
                   <span style={{ fontSize: 15, fontWeight: 600 }}>미완료 · 진행 중</span>

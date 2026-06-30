@@ -21,6 +21,9 @@ test("작성자: 휴가로 전환 → 휴직(사유 필수) → 빈 사유 차�
   await page.getByTestId("vac-reason").fill("가족 돌봄으로 2주 휴직합니다. 진행 업무는 박지훈 님께 인계했습니다.");
   await page.getByTestId("primary-action").click();
   await expect(page.getByTestId("report-status")).toContainText("검수대기");
+  await expect(page.getByTestId("vacation-card")).toContainText("읽기 전용");
+  await expect(page.getByTestId("vacation-cancel")).toHaveCount(0);
+  await expect(page.getByTestId("primary-action")).toHaveCount(0);
 });
 
 test("근태 변경 → 하단 취소 버튼으로 업무 작성 복귀", async ({ page }) => {

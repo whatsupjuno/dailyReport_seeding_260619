@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 
 type Member = { id: number; name: string };
 export type AdminGroup = { id: number; name: string; leader_id: number | null; leader_name: string | null; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; invite_at: string | null; members: Member[] };
-export type BriefUser = { id: number; name: string; login_id: string; group_id: number | null; group_name: string | null };
+export type BriefUser = { id: number; name: string; login_id: string; role: "employee" | "group_leader" | "admin"; group_id: number | null; group_name: string | null };
+
+function canLeadGroup(u: BriefUser): boolean {
+  return u.role === "group_leader" || u.role === "admin";
+}
 
 export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; users: BriefUser[] }) {
   const router = useRouter();
@@ -36,6 +40,12 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
 
   const editGroup = editId == null ? null : groups.find((g) => g.id === editId) ?? null;
   const memberGroup = memberForId == null ? null : groups.find((g) => g.id === memberForId) ?? null;
+  const leaderCandidates = users.filter(canLeadGroup);
+  const validLeaderIds = new Set(leaderCandidates.map((u) => u.id));
+  const invalidCurrentLeader =
+    editGroup?.leader_id && !validLeaderIds.has(editGroup.leader_id)
+      ? { id: editGroup.leader_id, name: editGroup.leader_name ?? `ID ${editGroup.leader_id}` }
+      : null;
 
   async function send(url: string, init: RequestInit): Promise<boolean> {
     setBusy(true);
@@ -191,9 +201,14 @@ export default function GroupsAdmin({ groups, users }: { groups: AdminGroup[]; u
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", margin: "14px 0 6px" }}>그룹장</label>
             <select value={eLeader} onChange={(e) => setELeader(e.target.value)} data-testid="group-edit-leader" style={{ ...inp, cursor: "pointer" }}>
               <option value="">미지정</option>
-              {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
+              {invalidCurrentLeader && <option value={String(invalidCurrentLeader.id)} disabled>현재 지정: {invalidCurrentLeader.name} (역할 변경 필요)</option>}
+              {leaderCandidates.map((u) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
             </select>
-            <div style={{ fontSize: 12, color: "#9AA1AE", marginTop: 8 }}>활성 사용자 누구나 지정할 수 있어요(구성원 아니어도 가능). 한 사람이 여러 그룹의 그룹장을 맡을 수 있습니다.</div>
+            <div style={{ fontSize: 12, color: invalidCurrentLeader ? "#B91C1C" : "#9AA1AE", marginTop: 8 }}>
+              {invalidCurrentLeader
+                ? "현재 그룹장은 유효한 역할이 아닙니다. 저장하려면 활성 그룹장·관리자 역할 사용자를 선택해 주세요."
+                : "활성 그룹장·관리자 역할 사용자만 지정할 수 있어요(구성원 아니어도 가능). 한 사람이 여러 그룹의 그룹장을 맡을 수 있습니다."}
+            </div>
             <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #EFF1F5" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#3A4150", cursor: "pointer" }}>
                 <input type="checkbox" data-testid="group-edit-ai-toggle" checked={eIsAi} onChange={(e) => { setEIsAi(e.target.checked); applyAiDefaults(e.target.checked, { ws: setEWs, we: setEWe, due: setEDue, invite: setEInvite }); }} />

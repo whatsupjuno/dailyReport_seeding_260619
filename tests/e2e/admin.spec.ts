@@ -119,20 +119,21 @@ test("관리자: 그룹 생성→구성원 추가→그룹장 지정→구성원
   await page.getByTestId("group-member-modal").getByRole("button", { name: "닫기" }).click();
   await expect(card).toContainText("박지훈");
 
-  // 3) 그룹장 지정(박지훈)
+  // 3) 직원 역할 사용자는 그룹장 후보에서 제외, 그룹장 역할 사용자는 비구성원이어도 지정 가능
   await card.getByRole("button", { name: "수정" }).click();
-  await page.getByTestId("group-edit-leader").selectOption({ label: "박지훈" });
+  await expect(page.getByTestId("group-edit-leader").locator("option", { hasText: "박지훈" })).toHaveCount(0);
+  await page.getByTestId("group-edit-leader").selectOption({ label: "김도윤" });
   const saved = page.waitForResponse((r) => /\/api\/admin\/groups\/\d+$/.test(r.url()) && r.request().method() === "PATCH" && r.ok());
   await page.getByTestId("group-edit-save").click();
   await saved;
-  await expect(card.getByTestId("group-leader-name")).toHaveText("박지훈");
+  await expect(card.getByTestId("group-leader-name")).toHaveText("김도윤");
 
-  // 4) 구성원 제거(박지훈 ✕) → 그룹장도 함께 해제
+  // 4) 구성원 제거(박지훈 ✕) → 비구성원 그룹장 지정은 유지
   const removed = page.waitForResponse((r) => /\/api\/admin\/groups\/\d+\/members\?userId=\d+/.test(r.url()) && r.request().method() === "DELETE" && r.ok());
   await card.getByRole("button", { name: "박지훈 제거" }).click();
   await removed;
   await expect(card.getByText("구성원 없음")).toBeVisible();
-  await expect(card.getByTestId("group-leader-name")).toHaveText("미지정");
+  await expect(card.getByTestId("group-leader-name")).toHaveText("김도윤");
 
   // 5) 박지훈을 원래 그룹(영업팀)으로 복원 — 다른 스펙의 그룹 의존 보존
   const salesCard = page.getByTestId("admin-group-card").filter({ hasText: "영업팀" });
@@ -209,6 +210,18 @@ test("관리자: 사용자 추가 시 그룹장 역할 지정 → 그룹 메뉴�
   // 3) 그룹 메뉴 → 리더검증팀의 그룹장이 신임리더로 반영
   await page.goto("/admin/groups");
   await expect(page.getByTestId("admin-group-card").filter({ hasText: "리더검증팀" }).getByTestId("group-leader-name")).toHaveText("신임리더");
+
+  // 4) 그룹장을 비활성화하면 그룹장직도 해제
+  await page.goto("/admin/users");
+  await page.getByTestId("admin-user-search").fill("신임리더");
+  const leaderRow = page.getByTestId("admin-user-row").filter({ hasText: "신임리더" });
+  await leaderRow.getByRole("button", { name: "수정" }).click();
+  await page.getByTestId("admin-edit-active").uncheck();
+  const disabled = page.waitForResponse((r) => /\/api\/admin\/users\/\d+$/.test(r.url()) && r.request().method() === "PATCH" && r.ok());
+  await page.getByTestId("admin-edit-save").click();
+  await disabled;
+  await page.goto("/admin/groups");
+  await expect(page.getByTestId("admin-group-card").filter({ hasText: "리더검증팀" }).getByTestId("group-leader-name")).toHaveText("미지정");
 });
 
 test("작성 제외 사용자: 로그인 시 작성 화면으로 안 보냄 + 작성 페이지 안내(직접 작성은 가능)", async ({ page, browser }) => {
@@ -295,7 +308,7 @@ test("복수 그룹장: 한 사람을 여러 그룹의 그룹장으로 지정(�
   await page.getByTestId("group-create-submit").click();
   await created;
 
-  // 복수검증팀 그룹장을 김도윤(개발팀 그룹장 겸 비구성원)으로 지정 — 활성 사용자 누구나 가능
+  // 복수검증팀 그룹장을 김도윤(개발팀 그룹장 겸 비구성원)으로 지정 — group_leader/admin 역할만 가능
   const card = page.getByTestId("admin-group-card").filter({ hasText: "복수검증팀" });
   await card.getByRole("button", { name: "수정" }).click();
   await page.getByTestId("group-edit-leader").selectOption({ label: "김도윤" });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { parseId } from "@/lib/auth/api";
 import { requireUser } from "@/lib/auth/guard";
 import { listMyReports, listMyReportsRange, listScopeReports, listScopeReportsRange, listScopeReportsByStatus, listLedGroupIds, listReportIdsByTaskSearch, type MgrRow, type EmpRow } from "@/lib/data/list";
 import { listGroupOptions } from "@/lib/data/admin";
@@ -28,9 +29,15 @@ function Badge({ label }: { label: string }) {
   return <span style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{label}</span>;
 }
 
-type SP = Promise<{ tab?: string; q?: string; group?: string; date?: string; from?: string; to?: string; page?: string; sort?: string; mode?: string; reviewSort?: string }>;
+type SearchParamValue = string | string[] | undefined;
+type SearchParams = { tab?: SearchParamValue; q?: SearchParamValue; group?: SearchParamValue; date?: SearchParamValue; from?: SearchParamValue; to?: SearchParamValue; page?: SearchParamValue; sort?: SearchParamValue; mode?: SearchParamValue; reviewSort?: SearchParamValue };
+type SP = Promise<SearchParams>;
 
 const isISO = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s + "T00:00:00Z"));
+
+function firstParam(v: SearchParamValue): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
 
 // 검수 열 정렬용 검수단계 순위(디자인 reviewRank): 승인 3 · 반려 2 · 검수대기/계획제출 1 · 그 외(검수 없음) 0
 function reviewRankOf(status: string): number {
@@ -70,7 +77,19 @@ function sortRows<T extends { submitted_at: string | null; report_date: string |
 }
 
 export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
-  const sp = await searchParams;
+  const raw = await searchParams;
+  const sp = {
+    tab: firstParam(raw.tab),
+    q: firstParam(raw.q),
+    group: firstParam(raw.group),
+    date: firstParam(raw.date),
+    from: firstParam(raw.from),
+    to: firstParam(raw.to),
+    page: firstParam(raw.page),
+    sort: firstParam(raw.sort),
+    mode: firstParam(raw.mode),
+    reviewSort: firstParam(raw.reviewSort),
+  };
   const user = await requireUser();
   const isManager = user.role === "group_leader" || user.role === "admin";
   const today = todayKstISO();
@@ -95,7 +114,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
 
   if (isManager) {
     // admin: 전체(또는 필터). group_leader: 자신이 그룹장인 모든 그룹(복수 그룹장 지원).
-    const groupIds = user.role === "admin" ? (sp.group ? [Number(sp.group)] : null) : await listLedGroupIds(user.id);
+    const adminGroupId = user.role === "admin" && sp.group ? parseId(sp.group) : null;
+    const invalidAdminGroup = user.role === "admin" && sp.group != null && sp.group !== "" && adminGroupId == null;
+    const groupIds = user.role === "admin" ? (invalidAdminGroup ? [] : adminGroupId != null ? [adminGroupId] : null) : await listLedGroupIds(user.id);
     const groups = user.role === "admin" ? await listGroupOptions() : [];
     const all = isSingleDay
       ? await listScopeReports({ groupIds, date: from }) // 단일일: 스냅샷(미작성 포함, KPI용)
@@ -125,7 +146,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
       { k: "rejected", label: "반려", n: cnt((r) => r.status === "반려") },
       { k: "approved", label: "승인", n: approvedAll.length },
     ];
-    const extraQs = `${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.group ? `&group=${sp.group}` : ""}${sort !== "time" ? `&sort=${sort}` : ""}${mode !== "normal" ? `&mode=${mode}` : ""}`;
+    const extraQs = `${q ? `&q=${encodeURIComponent(q)}` : ""}${adminGroupId != null ? `&group=${adminGroupId}` : ""}${sort !== "time" ? `&sort=${sort}` : ""}${mode !== "normal" ? `&mode=${mode}` : ""}`;
     const qs = (k: string, pg = 1, rs: string = reviewSort) => `?tab=${k}&from=${from}&to=${to}&page=${pg}${extraQs}${rs ? `&reviewSort=${rs}` : ""}`;
 
     // KPI 집계
@@ -191,7 +212,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
               );
             })}
           </div>
-          <FilterBar tab={tab} from={from} to={to} q={q} group={sp.group ?? ""} isAdmin={user.role === "admin"} isManager={true} groups={groups} today={today} sort={sort} mode={mode} reviewSort={reviewSort} hideDate={isApprovedView} />
+          <FilterBar tab={tab} from={from} to={to} q={q} group={adminGroupId != null ? String(adminGroupId) : ""} isAdmin={user.role === "admin"} isManager={true} groups={groups} today={today} sort={sort} mode={mode} reviewSort={reviewSort} hideDate={isApprovedView} />
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }} data-testid="mgr-table">
             <thead><tr style={{ background: "#F7F8FA", borderTop: "1px solid #E2E5EB" }}>
@@ -212,8 +233,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
                 const review = pending && (!isOwn || selfReviewAllowed);
                 const rowDate = r.report_date ?? from;
                 const href = isOwn && !review ? `/report/${rowDate}` : `/review/${r.report_id}`;
+                const rowKey = r.report_id != null ? `report-${r.report_id}` : `user-date-${r.user_id}-${rowDate}`;
                 return (
-                <tr key={r.user_id} style={{ borderTop: "1px solid #E2E5EB" }} data-testid="mgr-row">
+                <tr key={rowKey} style={{ borderTop: "1px solid #E2E5EB" }} data-testid="mgr-row">
                   <td style={{ padding: "13px 16px" }}><div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}{isOwn ? <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", marginLeft: 6 }}>· 나</span> : null}</div><div style={{ fontSize: 11, color: "#9AA1AE" }}>{r.dept}</div></td>
                   <td style={{ padding: "13px 16px", fontSize: 13, color: "#6B7280" }} className="tnum">{shortDate(rowDate)} ({weekday(rowDate)})</td>
                   <td style={{ padding: "13px 16px" }}><Badge label={r.status} /></td>

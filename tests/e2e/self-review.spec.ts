@@ -12,7 +12,22 @@ test("최상위 관리자는 본인 보고서를 직접 승인(셀프 승인)", 
   await page.getByTestId("add-task").click();
   await page.getByTestId("add-title").fill("주간 운영 점검");
   await page.getByTestId("add-submit").click();
-  await expect(page.getByTestId("task-row").filter({ hasText: "주간 운영 점검" })).toBeVisible();
+  const taskRow = page.getByTestId("task-row").filter({ hasText: "주간 운영 점검" });
+  await expect(taskRow).toBeVisible();
+
+  // admin owner는 댓글 작성권한이 있으며, 본인 댓글 수정·삭제도 같은 권한 기준으로 가능해야 한다.
+  await taskRow.getByTestId("comment-button").click();
+  await page.getByTestId("comment-input").fill("운영 점검 사전 메모");
+  await page.getByTestId("comment-post").click();
+  await expect(page.getByTestId("comment-item").filter({ hasText: "운영 점검 사전 메모" })).toBeVisible();
+  await page.getByTestId("comment-edit").click();
+  await page.getByTestId("comment-edit-input").fill("운영 점검 사전 메모 수정");
+  await page.getByTestId("comment-edit-save").click();
+  await expect(page.getByTestId("comment-item").filter({ hasText: "운영 점검 사전 메모 수정" })).toBeVisible();
+  await page.getByTestId("comment-delete").click();
+  await page.getByTestId("comment-delete-confirm").click();
+  await expect(page.getByTestId("comment-tombstone")).toBeVisible();
+  await page.getByTestId("comment-close").click();
 
   await page.getByTestId("primary-action").click(); // 계획제출
   await expect(page.getByTestId("report-status")).toContainText("계획제출");
@@ -27,6 +42,7 @@ test("최상위 관리자는 본인 보고서를 직접 승인(셀프 승인)", 
   await expect(review).toHaveAttribute("href", /\/review\/\d+/); // 셀프승인 가능 → 본인 행이 검수 상세로 연결(편집기 아님)
   await review.click();
   await expect(page).toHaveURL(/\/review\/\d+/); // 셀프검수 가드에 막혀 /review로 튕기지 않음
+  await expect(page.getByTestId(/row-reject-\d+/)).toHaveCount(0); // 행 반려 API는 셀프 금지라 UI도 미노출
 
   // 셀프 승인 → 승인 처리 (POST 완료를 기다린 뒤 이동 — 레이스 방지)
   const approved = page.waitForResponse(

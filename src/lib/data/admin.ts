@@ -13,6 +13,17 @@ export function resolveEmail(loginId: string, email?: string): string {
   return isValidEmail(lid) ? lid : `${lid}@company.com`;
 }
 
+async function assertAssignableLeader(leaderId: number | null | undefined): Promise<void> {
+  if (leaderId == null) return;
+  const m = await queryOne<{ active: boolean; role: string }>(
+    `SELECT active, role FROM users WHERE id=$1`,
+    [leaderId],
+  );
+  if (!m) throw new Error("LEADER_NOT_ACTIVE");
+  if (!m.active) throw new Error("LEADER_NOT_ACTIVE");
+  if (m.role !== "group_leader" && m.role !== "admin") throw new Error("LEADER_NOT_ASSIGNABLE");
+}
+
 export interface GroupWithMembers {
   id: number;
   name: string;
@@ -68,13 +79,19 @@ export async function createUser(input: CreateUserInput): Promise<{ id: number }
         [input.loginId, input.name, input.email, input.role, input.groupId, input.loginCode ?? "1234"],
       )
     ).rows[0].id;
-    // 그룹장 역할 + 소속 그룹이면, 그 그룹에 활성 그룹장이 없을 때 이 사용자를 그룹장(leader_user_id)으로 지정.
-    // (기존 활성 그룹장 무단 교체는 하지 않음 — 교체는 '그룹 관리 > 그룹장 변경'에서)
+    // 그룹장 역할 + 소속 그룹이면, 그 그룹에 유효한 활성 그룹장이 없을 때 이 사용자를 그룹장(leader_user_id)으로 지정.
+    // (기존 유효 그룹장 무단 교체는 하지 않음 — 교체는 '그룹 관리 > 그룹장 변경'에서)
     if (input.role === "group_leader" && input.groupId != null) {
       await c.query(
         `UPDATE groups g SET leader_user_id = $1
            WHERE g.id = $2
-             AND (g.leader_user_id IS NULL OR NOT EXISTS (SELECT 1 FROM users lu WHERE lu.id = g.leader_user_id AND lu.active))`,
+             AND (g.leader_user_id IS NULL
+                  OR NOT EXISTS (
+                    SELECT 1 FROM users lu
+                     WHERE lu.id = g.leader_user_id
+                       AND lu.active
+                       AND lu.role IN ('group_leader','admin')
+                  ))`,
         [newId, input.groupId],
       );
     }
@@ -103,6 +120,7 @@ export async function createGroup(input: { name: string; leaderId?: number | nul
   if (!name) throw new Error("NAME_REQUIRED");
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1)`, [name]);
   if (dup) throw new Error("DUPLICATE_NAME");
+  await assertAssignableLeader(input.leaderId);
   const r = await queryOne<{ id: number }>(
     `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due, invite_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
@@ -112,7 +130,7 @@ export async function createGroup(input: { name: string; leaderId?: number | nul
 }
 
 /**
- * 그룹 정보 수정(이름·그룹장·시간정책). 그룹장은 활성 사용자면 누구나(구성원 아니어도). 미지정 허용.
+ * 그룹 정보 수정(이름·그룹장·시간정책). 그룹장은 활성 group_leader/admin만 가능(구성원 아니어도). 미지정 허용.
  * 반환 policyChanged=true면 시간정책(AI토글/작성창/자동제출)이 실제로 바뀐 것 → 호출부가 그룹원 메일 발송.
  */
 export async function updateGroup(
@@ -131,11 +149,8 @@ export async function updateGroup(
   if (!cur) throw new Error("NOT_FOUND");
   const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1) AND id<>$2`, [name, id]);
   if (dup) throw new Error("DUPLICATE_NAME");
-  // 그룹장은 활성 사용자면 누구나 지정 가능(구성원 아니어도). 한 사람이 여러 그룹의 그룹장을 맡을 수 있음.
-  if (input.leaderId != null) {
-    const m = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1 AND active`, [input.leaderId]);
-    if (!m) throw new Error("LEADER_NOT_ACTIVE");
-  }
+  // 그룹장은 활성 group_leader/admin만 지정 가능(구성원 아니어도). 한 사람이 여러 그룹의 그룹장을 맡을 수 있음.
+  await assertAssignableLeader(input.leaderId);
   // 미지정 필드는 기존값 유지(부분 수정). submitDue는 빈문자/undefined 구분: undefined=유지, ''=OFF로 해제.
   const isAi = input.isAi ?? cur.is_ai_group;
   const writeStart = input.writeStart || cur.write_start;
@@ -204,16 +219,21 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<vo
     );
 
     // 그룹장 실체(groups.leader_user_id) 동기화 — 그룹장직은 소속과 독립(복수 그룹장 지원).
-    // 다른 그룹의 그룹장직은 건드리지 않는다. 단:
-    if (input.role === "employee") {
-      // 직원으로 강등되면 어느 그룹도 이끌 수 없음 → 맡고 있던 그룹장직 전부 해제
+    if (!input.active || input.role === "employee") {
+      // 직원 강등 또는 비활성 전환 시 어느 그룹도 이끌 수 없음 → 맡고 있던 그룹장직 전부 해제
       await c.query(`UPDATE groups SET leader_user_id=NULL WHERE leader_user_id=$1`, [id]);
     } else if (input.role === "group_leader" && input.groupId != null) {
-      // 그룹장이면 자기 소속 그룹에 활성 그룹장이 없을 때만 본인을 지정(편의 — 추가 그룹은 '그룹 관리'에서)
+      // 그룹장이면 자기 소속 그룹에 유효한 활성 그룹장이 없을 때만 본인을 지정(편의 — 추가 그룹은 '그룹 관리'에서)
       await c.query(
         `UPDATE groups g SET leader_user_id = $1
            WHERE g.id = $2
-             AND (g.leader_user_id IS NULL OR NOT EXISTS (SELECT 1 FROM users lu WHERE lu.id = g.leader_user_id AND lu.active))`,
+             AND (g.leader_user_id IS NULL
+                  OR NOT EXISTS (
+                    SELECT 1 FROM users lu
+                     WHERE lu.id = g.leader_user_id
+                       AND lu.active
+                       AND lu.role IN ('group_leader','admin')
+                  ))`,
         [id, input.groupId],
       );
     }

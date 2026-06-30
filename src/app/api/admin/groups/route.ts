@@ -31,6 +31,8 @@ export async function POST(req: Request) {
     const m = (e as Error).message;
     if (m === "DUPLICATE_NAME") return conflict("이미 사용 중인 그룹명입니다.");
     if (m === "NAME_REQUIRED") return badRequest("그룹명을 입력해 주세요.");
+    if (m === "LEADER_NOT_ACTIVE") return badRequest("비활성 사용자는 그룹장으로 지정할 수 없습니다.");
+    if (m === "LEADER_NOT_ASSIGNABLE") return badRequest("그룹장은 관리자 또는 그룹장 역할 사용자만 지정할 수 있습니다.");
     throw e;
   }
 }
