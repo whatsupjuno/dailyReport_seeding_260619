@@ -113,7 +113,8 @@ export default function CommentDrawer({
   const [mentionFor, setMentionFor] = useState<MentionCtx | null>(null);
   const [mentionQuery, setMentionQuery] = useState("");
 
-  const canMutate = role !== "관리자"; // 관리자 읽기전용(브리프 §권한)
+  // 작성/답글/수정/삭제 권한 = 서버 canWrite 기준(role 라벨로 막으면 검수권자 관리자의 post가 막혀 무반응; 2026-06-30 버그)
+  const canMutate = canWrite;
 
   async function refetch() {
     const list = await fetch(`/api/tasks/${task.id}/comments`).then((r) => r.json());
