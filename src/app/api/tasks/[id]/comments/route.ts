@@ -67,8 +67,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   try {
     const res = await addComment(taskId, user.id, user.role, body.body, parentId);
-    // 댓글/대댓글/@멘션 → 수신자에게 즉시 알림(승인/반려 즉시발송 미러링). best-effort(메일 실패가 저장을 막지 않음).
-    await notifyComment({
+    // 댓글/대댓글/@멘션 → 수신자 알림. **응답을 막지 않게 fire-and-forget**: 운영(NCP 실발송)이
+    // 느리거나 멈춰도 댓글 등록은 즉시 완료된다. 메일 실패는 로그만(댓글 저장/응답엔 영향 없음).
+    void notifyComment({
       taskId,
       reportId: res.reportId,
       authorId: user.id,
@@ -76,7 +77,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       isReply: parentId != null,
       parentAuthorId: res.parentAuthorId,
       mentions: res.mentions,
-    });
+    }).catch((e) => console.error("[notifyComment] failed:", e));
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {
     const m = (e as Error).message;

@@ -32,11 +32,11 @@ export async function listProjects(opts?: { includeArchived?: boolean }): Promis
 }
 
 /** 작성 화면 드롭다운용 — 보관 제외 프로젝트명(중복 제거·이름순). */
-export async function listActiveProjectNames(): Promise<string[]> {
-  const rows = await query<{ name: string }>(
-    `SELECT DISTINCT name FROM projects WHERE status <> '보관' ORDER BY name`,
+export async function listActiveProjectOptions(): Promise<{ name: string; custName: string | null }[]> {
+  const rows = await query<{ name: string; cust_name: string | null }>(
+    `SELECT name, max(cust_name) AS cust_name FROM projects WHERE status <> '보관' GROUP BY name ORDER BY name`,
   );
-  return rows.map((r) => r.name);
+  return rows.map((r) => ({ name: r.name, custName: r.cust_name }));
 }
 
 export interface ProjectInput {

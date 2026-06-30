@@ -71,8 +71,8 @@ export interface ReportView {
   recentTasks: Array<{ name: string; project: string | null; planned: number | null }>;
   // 직전 보고서의 미완료 업무 중 아직 안 가져온 후보(‘미완료 업무 불러오기’ 팝업)
   carryoverCandidates: Array<{ id: number; project: string | null; title: string }>;
-  // 관리에서 등록한 보관 제외 프로젝트명(작성 드롭다운 제안). 자유 텍스트 입력은 병행 유지(B2).
-  projectOptions: string[];
+  // 관리에서 등록한 보관 제외 프로젝트(작성 드롭다운 제안, 고객명 동반). 자유 텍스트 입력은 병행 유지(B2).
+  projectOptions: { name: string; custName: string | null }[];
 }
 
 const VAC_TYPES = ["연차", "반차", "병가", "공가", "휴직", "기타"];
@@ -99,6 +99,8 @@ export default function ReportEditor({ view }: { view: ReportView }) {
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
+  // 프로젝트명 → 고객명 매핑(작성 행 칩에 고객명 동반 표시용)
+  const projCust = new Map((view.projectOptions ?? []).map((p) => [p.name, p.custName] as const));
   const [desc, setDesc] = useState("");
   const [start, setStart] = useState("");
   const [dur, setDur] = useState("");
@@ -719,7 +721,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 {/* 미완료 리스트 */}
                 <div style={{ marginTop: 8 }}>
                   {todoRows.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} reorderable={todoRows.length > 1 && !reviewMode} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
+                    <TaskRow key={t.id} t={t} busy={busy} projCust={projCust}reorderable={todoRows.length > 1 && !reviewMode} dragging={dragId === String(t.id)} onDragStart={(e) => startDrag(t.id, e)} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={{ open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
                   ))}
                   {view.todo.length === 0 && (
                     <div style={{ textAlign: "center", padding: "22px 0" }}>
@@ -747,9 +749,9 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                     <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#3A4150", marginBottom: 6 }}>프로젝트 <span style={{ color: "#9AA1AE", fontWeight: 400 }}>(선택)</span></label>
                     {/* 관리에서 등록한 보관 제외 프로젝트 제안(드롭다운) + 자유 텍스트 입력 병행(B2) */}
                     {view.projectOptions.length > 0 && (
-                      <select value={view.projectOptions.includes(project) ? project : ""} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} data-testid="add-project-select" style={{ ...inp, padding: "0 10px", color: "#3A4150", background: "#fff", cursor: "pointer", marginBottom: 8 }}>
+                      <select value={view.projectOptions.some((p) => p.name === project) ? project : ""} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} data-testid="add-project-select" style={{ ...inp, padding: "0 10px", color: "#3A4150", background: "#fff", cursor: "pointer", marginBottom: 8 }}>
                         <option value="">프로젝트 선택</option>
-                        {view.projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                        {view.projectOptions.map((p) => <option key={p.name} value={p.name}>{p.custName ? `${p.name} · ${p.custName}` : p.name}</option>)}
                       </select>
                     )}
                     <input value={project} onChange={(e) => { setProject(e.target.value); setSuggestOpen(true); }} onFocus={() => setSuggestOpen(true)} data-testid="add-project" placeholder={view.projectOptions.length > 0 ? "또는 프로젝트명 직접 입력 (최근 업무 불러오기)" : "프로젝트명을 입력하면 최근 업무를 불러올 수 있어요"} style={inp} />
@@ -841,7 +843,7 @@ export default function ReportEditor({ view }: { view: ReportView }) {
                 </div>
                 <div style={{ padding: "6px 18px 14px" }}>
                   {view.todo.map((t) => (
-                    <TaskRow key={t.id} t={t} busy={busy} editable={!readOnly} rejectedMode={false} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={readOnly ? undefined : { open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
+                    <TaskRow key={t.id} t={t} busy={busy} projCust={projCust}editable={!readOnly} rejectedMode={false} onMarkDone={() => markDone(t.id, t.rejectState === "반려")} onComment={() => openDrawer(t, "오늘 할 일")} onMenu={() => openEdit(t)} onDelete={() => deleteTaskNow(t)} attach={readOnly ? undefined : { open: attachOpen?.kind === "task" && attachOpen.id === t.id, onToggle: () => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === t.id ? null : { kind: "task", id: t.id }), onUploadFile: (f) => taskAttachFile(t.id, f), onUploadUrl: (u) => taskAttachUrl(t.id, u) }} />
                   ))}
                 </div>
               </div>
@@ -849,13 +851,13 @@ export default function ReportEditor({ view }: { view: ReportView }) {
 
             {/* 결과 바구니: AI 그룹은 24시간 단일 타임라인, 그 외는 오전 / 오후 / 야간 */}
             {view.isAi ? (
-              <ResultBucket testid="result-bucket-ai" zone="완료" icon="" name="완료" range="24시간 (완료시각 순)" tasks={view.aiDone} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 완료한 업무가 없습니다." />
+              <ResultBucket testid="result-bucket-ai" zone="완료" icon="" name="완료" range="24시간 (완료시각 순)" tasks={view.aiDone} editable={!readOnly} rejectedMode={false} busy={busy} projCust={projCust} onReopen={reopen}onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 완료한 업무가 없습니다." />
             ) : (
               <>
-                <ResultBucket testid="result-bucket-am" zone="오전" icon="" name="오전" range="00:00 ~ 11:59" tasks={view.am} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오전에 마감한 업무가 없습니다." />
-                <ResultBucket testid="result-bucket-pm" zone="오후" icon="" name="오후" range="12:00 ~" tasks={view.pm} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오후에 마감한 업무가 없습니다." />
+                <ResultBucket testid="result-bucket-am" zone="오전" icon="" name="오전" range="00:00 ~ 11:59" tasks={view.am} editable={!readOnly} rejectedMode={false} busy={busy} projCust={projCust} onReopen={reopen}onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오전에 마감한 업무가 없습니다." />
+                <ResultBucket testid="result-bucket-pm" zone="오후" icon="" name="오후" range="12:00 ~" tasks={view.pm} editable={!readOnly} rejectedMode={false} busy={busy} projCust={projCust} onReopen={reopen}onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="아직 오후에 마감한 업무가 없습니다." />
                 {(nightOn || view.night.length > 0) && (
-                  <ResultBucket testid="result-bucket-night" zone="야간" icon="🌙 " name="야간" range="20:00 ~" tasks={view.night} editable={!readOnly} rejectedMode={false} busy={busy} onReopen={reopen} onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="마감한 야간 업무가 정리됩니다." />
+                  <ResultBucket testid="result-bucket-night" zone="야간" icon="🌙 " name="야간" range="20:00 ~" tasks={view.night} editable={!readOnly} rejectedMode={false} busy={busy} projCust={projCust} onReopen={reopen}onComment={openDrawer} onMenu={openEdit} onDelete={deleteTaskNow} attachOpenId={attachOpen?.kind === "task" ? attachOpen.id : null} onAttachToggle={(id) => setAttachOpen(attachOpen?.kind === "task" && attachOpen.id === id ? null : { kind: "task", id })} onAttachUploadFile={taskAttachFile} onAttachUploadUrl={taskAttachUrl} emptyText="마감한 야간 업무가 정리됩니다." />
                 )}
               </>
             )}
@@ -1244,7 +1246,7 @@ function RejectBand({ comment }: { comment: string | null }) {
   );
 }
 
-function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable = false, dragging = false, onDragStart, onMarkDone, onComment, onMenu, onDelete, attach }: { t: ReportTask; busy: boolean; editable?: boolean; rejectedMode?: boolean; reorderable?: boolean; dragging?: boolean; onDragStart?: (e: React.PointerEvent) => void; onMarkDone: () => void; onComment: () => void; onMenu?: () => void; onDelete?: () => void; attach?: AttachProp }) {
+function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable = false, dragging = false, onDragStart, onMarkDone, onComment, onMenu, onDelete, attach, projCust }: { t: ReportTask; busy: boolean; editable?: boolean; rejectedMode?: boolean; reorderable?: boolean; dragging?: boolean; onDragStart?: (e: React.PointerEvent) => void; onMarkDone: () => void; onComment: () => void; onMenu?: () => void; onDelete?: () => void; attach?: AttachProp; projCust?: Map<string, string | null> }) {
   const m = statusMeta(t.status);
   const rejected = t.rejectState === "반려";
   // editable=false(=view 읽기 전용)면 마감/⋯ 액션 숨김. 반려 모드는 editable=true로 전체 편집.
@@ -1266,6 +1268,7 @@ function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable =
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {t.project && <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 6, padding: "2px 7px" }}>{t.project}</span>}
+            {t.project && projCust?.get(t.project) && <span style={{ fontSize: 11, fontWeight: 500, color: "#9AA1AE" }}>{projCust?.get(t.project)}</span>}
             <span style={{ fontSize: 14, fontWeight: 600, color: "#1A1F2B" }}>{t.title}</span>
             <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{t.status === "계획" ? "예정" : t.status}</span>
             {t.isNight && <span style={{ fontSize: 11, fontWeight: 600, color: "#8A6508", background: "#FBF4DA", border: "1px solid #EFE0A6", borderRadius: 6, padding: "2px 7px" }}>🌙 야간</span>}
@@ -1299,7 +1302,7 @@ function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable =
   );
 }
 
-function ResultBucket({ testid, zone, icon, name, range, tasks, editable, rejectedMode = false, busy, onReopen, onComment, onMenu, onDelete, attachOpenId, onAttachToggle, onAttachUploadFile, onAttachUploadUrl, emptyText }: { testid: string; zone: string; icon: string; name: string; range: string; tasks: ReportTask[]; editable: boolean; rejectedMode?: boolean; busy: boolean; onReopen: (id: number, ackReject: boolean) => void; onComment: (t: ReportTask, zone: string) => void; onMenu?: (t: ReportTask) => void; onDelete?: (t: ReportTask) => void; attachOpenId?: number | null; onAttachToggle?: (id: number) => void; onAttachUploadFile?: (id: number, file: File) => void; onAttachUploadUrl?: (id: number, url: string) => void; emptyText: string }) {
+function ResultBucket({ testid, zone, icon, name, range, tasks, editable, rejectedMode = false, busy, onReopen, onComment, onMenu, onDelete, attachOpenId, onAttachToggle, onAttachUploadFile, onAttachUploadUrl, emptyText, projCust }: { testid: string; zone: string; icon: string; name: string; range: string; tasks: ReportTask[]; editable: boolean; rejectedMode?: boolean; busy: boolean; onReopen: (id: number, ackReject: boolean) => void; onComment: (t: ReportTask, zone: string) => void; onMenu?: (t: ReportTask) => void; onDelete?: (t: ReportTask) => void; attachOpenId?: number | null; onAttachToggle?: (id: number) => void; onAttachUploadFile?: (id: number, file: File) => void; onAttachUploadUrl?: (id: number, url: string) => void; emptyText: string; projCust?: Map<string, string | null> }) {
   // 디자인: 헤더 우측 배지 = '완결 N'(+지연 M 있으면 ' · 지연 M'), 초록 톤
   const doneN = tasks.filter((t) => t.status === "완결").length;
   const delayedN = tasks.filter((t) => t.status === "지연").length;
@@ -1329,6 +1332,7 @@ function ResultBucket({ testid, zone, icon, name, range, tasks, editable, reject
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {t.project && <span style={{ fontSize: 11, fontWeight: 600, color: "#2F49B0", background: "#EEF2FF", borderRadius: 6, padding: "2px 7px" }}>{t.project}</span>}
+            {t.project && projCust?.get(t.project) && <span style={{ fontSize: 11, fontWeight: 500, color: "#9AA1AE" }}>{projCust?.get(t.project)}</span>}
                       <span style={{ fontSize: 14, fontWeight: 600, color: "#1A1F2B" }}>{t.title}</span>
                       <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 6, background: m.bg, border: `1px solid ${m.line}`, color: m.main }}>{t.status === "계획" ? "예정" : t.status}</span>
                       {t.doneTime && <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", background: "#F1F2F4", borderRadius: 6, padding: "2px 7px" }} className="tnum">✓ 마감 {t.doneTime}</span>}
