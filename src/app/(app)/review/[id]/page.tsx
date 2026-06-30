@@ -80,6 +80,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ i
       attachments: attMap.get(t.id) ?? [],
       commentCount: commentMeta.get(t.id)?.count ?? 0,
       commentUnread: commentMeta.get(t.id)?.unread ?? false,
+      commentLeaderUnread: commentMeta.get(t.id)?.leaderUnread ?? false,
       rejectComment: rej?.comment ?? null,
       rejectedBy: rej?.rejected_by_name ?? null,
       rejectedById: rej?.rejected_by ?? null,

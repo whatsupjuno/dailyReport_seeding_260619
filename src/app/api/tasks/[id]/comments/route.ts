@@ -37,6 +37,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       body: c.body,
       at: c.created_at,
       me: c.author_user_id === user.id,
+      edited: c.edited,
+      deleted: c.deleted,
+      deletedAt: c.deleted_at,
     })),
   });
 }

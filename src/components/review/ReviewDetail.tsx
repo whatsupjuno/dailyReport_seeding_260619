@@ -27,6 +27,7 @@ export interface ReviewTask {
   attachments: ReviewAttachment[];
   commentCount: number;
   commentUnread: boolean;
+  commentLeaderUnread: boolean; // 마지막 댓글이 그룹장(미확인) → 파란 '미확인' 배지
   rejectComment: string | null;
   rejectedBy: string | null;
   rejectedById: number | null;
@@ -111,7 +112,7 @@ function ReviewTaskRow({ t, zone, ctx }: { t: ReviewTask; zone: string; ctx: Row
           </div>
           {(t.plannedMin || t.actualMin) && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 3 }} className="tnum">{t.plannedMin ? `계획 ${t.plannedMin}분` : ""}{t.actualMin ? ` / 실제 ${t.actualMin}분` : ""}</div>}
         </div>
-        <CommentButton count={t.commentCount} unread={t.commentUnread} onClick={() => ctx.openDrawer(t, zone)} />
+        <CommentButton count={t.commentCount} unread={t.commentUnread} leaderUnread={t.commentLeaderUnread} onClick={() => ctx.openDrawer(t, zone)} />
         {view.canAct && view.reviewable && !rejected && ctx.rowRejectId !== t.id && (
           <button onClick={() => { ctx.setRowRejectId(t.id); ctx.setRowComment(""); }} data-testid={`row-reject-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #F5C2C2", color: "#DC2626", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>반려</button>
         )}

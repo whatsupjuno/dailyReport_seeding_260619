@@ -38,6 +38,7 @@ export interface ReportTask {
   rejectComment: string | null;
   commentCount: number;
   commentUnread: boolean;
+  commentLeaderUnread: boolean; // 마지막 댓글이 그룹장(미확인) → 파란 '미확인' 배지
   attachments: TaskAttachment[];
 }
 export interface ReportView {
@@ -1269,7 +1270,7 @@ function TaskRow({ t, busy, editable = true, rejectedMode = false, reorderable =
         {closeable && (
           <button data-id={t.id} onClick={onMarkDone} disabled={busy} data-testid={`mark-done-${t.id}`} style={{ flex: "none", background: "#3B5BDB", border: "none", color: "#fff", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "6px 14px", marginTop: 1 }}>마감</button>
         )}
-        <CommentButton count={t.commentCount} unread={t.commentUnread} onClick={onComment} />
+        <CommentButton count={t.commentCount} unread={t.commentUnread} leaderUnread={t.commentLeaderUnread} onClick={onComment} />
         {onMenu && closeable && <MenuButton onEdit={onMenu} onClose={onMarkDone} onDelete={onDelete ?? (() => {})} closeLabel="마감" />}
       </div>
       {hasDetail && (
@@ -1333,7 +1334,7 @@ function ResultBucket({ testid, zone, icon, name, range, tasks, editable, reject
                   {canReopen && (
                     <button data-id={t.id} onClick={() => onReopen(t.id, rejected)} disabled={busy} data-testid={`reopen-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #CBD0D9", color: "#6B7280", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>마감 취소</button>
                   )}
-                  <CommentButton count={t.commentCount} unread={t.commentUnread} onClick={() => onComment(t, zone)} />
+                  <CommentButton count={t.commentCount} unread={t.commentUnread} leaderUnread={t.commentLeaderUnread} onClick={() => onComment(t, zone)} />
                   {onMenu && canReopen && <MenuButton onEdit={() => onMenu(t)} onClose={() => onReopen(t.id, rejected)} onDelete={() => onDelete?.(t)} closeLabel="마감 취소" />}
                 </div>
                 {hasDetail && (
