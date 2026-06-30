@@ -49,6 +49,12 @@ export function shortDate(iso: string): string {
   return `${m}-${d}`;
 }
 
+/** 'YYYY-MM-DD' → '6월 18일' (앞자리 0 없이) */
+export function monthDayKo(iso: string): string {
+  const [, m, d] = iso.split("-").map(Number);
+  return `${m}월 ${d}일`;
+}
+
 /** 'YYYY-MM-DD' → '목' */
 export function weekday(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);

@@ -20,7 +20,10 @@ function weekRange(t: Ymd, deltaWeeks: number) { // 월요일 시작
   const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
   return { start: { y: mon.getFullYear(), m: mon.getMonth(), d: mon.getDate() }, end: { y: sun.getFullYear(), m: sun.getMonth(), d: sun.getDate() } };
 }
+// '전체' 프리셋의 넓은 시작일(이 이전 보고서는 없다고 보는 하한). end는 항상 오늘.
+const ALL_START: Ymd = { y: 2000, m: 0, d: 1 };
 function presetRange(key: string, t: Ymd): { start: Ymd; end: Ymd } {
+  if (key === "all") return { start: { ...ALL_START }, end: { ...t } };
   if (key === "today") return { start: { ...t }, end: { ...t } };
   if (key === "thisweek") return weekRange(t, 0);
   if (key === "lastweek") return weekRange(t, -1);
@@ -30,6 +33,7 @@ function presetRange(key: string, t: Ymd): { start: Ymd; end: Ymd } {
   return { start: { y: p.y, m: p.m, d: 1 }, end: { y: p.y, m: p.m, d: lastDay(p.y, p.m) } };
 }
 const PRESETS = [
+  { key: "all", label: "전체" },
   { key: "today", label: "오늘" }, { key: "thisweek", label: "이번주" }, { key: "lastweek", label: "지난주" },
   { key: "recent", label: "최근 한달" }, { key: "this", label: "이번달" }, { key: "prev", label: "저번달" },
 ];
@@ -39,10 +43,11 @@ function presetKeyOf(from: Ymd, to: Ymd, t: Ymd): string | null {
 }
 
 export default function FilterBar({
-  tab, from, to, q, group, isAdmin, groups, today, hideDate = false,
+  tab, from, to, q, group, isAdmin, isManager, groups, today, sort, mode, reviewSort, hideDate = false,
 }: {
-  tab: string; from: string; to: string; q: string; group: string; isAdmin: boolean;
-  groups: Array<{ id: number; name: string }>; today: string; hideDate?: boolean;
+  tab: string; from: string; to: string; q: string; group: string; isAdmin: boolean; isManager: boolean;
+  groups: Array<{ id: number; name: string }>; today: string;
+  sort: string; mode: string; reviewSort: string; hideDate?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState(q);
@@ -61,11 +66,14 @@ export default function FilterBar({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  function nav(nextFrom: string, nextTo: string, extra?: Partial<{ group: string; q: string }>) {
+  function nav(nextFrom: string, nextTo: string, extra?: Partial<{ group: string; q: string; sort: string; mode: string }>) {
     const p = new URLSearchParams();
     p.set("tab", tab); p.set("from", nextFrom); p.set("to", nextTo);
     const g = extra?.group ?? group; if (g) p.set("group", g);
     const query = extra?.q ?? search; if (query.trim()) p.set("q", query.trim());
+    const s = extra?.sort ?? sort; if (s && s !== "time") p.set("sort", s); // 기본 time은 URL 생략
+    const m = extra?.mode ?? mode; if (m && m !== "normal") p.set("mode", m); // 기본 normal은 URL 생략
+    if (reviewSort) p.set("reviewSort", reviewSort); // 검수 열 정렬 상태 보존
     router.push(`/reports?${p.toString()}`);
   }
 
@@ -114,11 +122,32 @@ export default function FilterBar({
           {groups.map((g) => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
         </select>
       )}
+      {/* 검색 모드 토글: 일반(키워드) / 문맥(시맨틱 — 준비 중 placeholder) */}
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: 3, background: "#F1F3F7", border: "1px solid #E2E5EB", borderRadius: 9, flex: "none" }} data-testid="search-mode-toggle">
+        {[{ m: "normal", label: "일반" }, { m: "context", label: "문맥" }].map((o) => {
+          const on = mode === o.m;
+          return (
+            <button key={o.m} type="button" data-mode={o.m} aria-pressed={on} onClick={() => nav(from, to, { mode: o.m })} data-testid={`search-mode-${o.m}`}
+              style={{ border: "none", background: on ? "#fff" : "transparent", color: on ? "#2F49B0" : "#6B7280", fontWeight: on ? 700 : 500, fontFamily: "inherit", fontSize: 13, padding: "6px 14px", borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap", boxShadow: on ? "0 1px 2px rgba(16,24,40,.12)" : "none" }}>{o.label}</button>
+          );
+        })}
+      </div>
       <div style={{ flex: 1, minWidth: 120, position: "relative", display: "flex", alignItems: "center" }}>
         <span aria-hidden style={{ position: "absolute", left: 12, color: "#9AA1AE", fontSize: 14, pointerEvents: "none" }}>🔍</span>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") nav(from, to); }} placeholder="이름·업무 내용으로 검색" aria-label="검색" data-testid="search-input"
+        <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") nav(from, to); }}
+          placeholder={isManager ? "이름·업무 내용으로 검색" : "업무 내용으로 검색"} aria-label="검색" data-testid="search-input"
           style={{ width: "100%", height: 38, border: "1px solid #CBD0D9", borderRadius: 8, padding: "0 12px 0 34px", fontFamily: "inherit", fontSize: 13, color: "#3A4150", outline: "none", boxSizing: "border-box" }} />
       </div>
+      {/* 정렬 기준: 제출시각 / 날짜 */}
+      <select value={sort} onChange={(e) => nav(from, to, { sort: e.target.value })} style={{ ...sel, fontWeight: 600 }} data-testid="sort-select" aria-label="정렬 기준">
+        <option value="time">제출시각</option>
+        <option value="date">날짜</option>
+      </select>
+      {mode === "context" && (
+        <div style={{ flexBasis: "100%", fontSize: 12, color: "#9AA1AE", marginTop: 2 }} data-testid="search-mode-note">
+          문맥(시맨틱) 검색은 준비 중이에요. 지금은 일반(키워드) 검색을 이용해 주세요.
+        </div>
+      )}
     </div>
   );
 }

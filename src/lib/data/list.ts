@@ -14,6 +14,32 @@ export interface MgrRow {
   delayed: number;
 }
 
+/** ILIKE 패턴으로 안전 변환: 와일드카드(%, _)와 escape(\)를 리터럴로 escape 후 양끝에 % 부착. */
+function likePattern(s: string): string {
+  return "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+}
+
+/**
+ * 업무 내용 텍스트 검색: 검색어가 tasks의 title/description/project 중 하나에 ILIKE 매칭되는
+ * 보고서 id 집합을 반환(plan 섹션 제외, v1/v2 공통). 목록의 일반(키워드) 검색에서 사용.
+ * 범위/그룹 스코프는 호출부에서 이미 조회한 행과 교집합으로 적용하므로 여기선 스코프 제약 없음.
+ */
+export async function listReportIdsByTaskSearch(search: string): Promise<number[]> {
+  const term = search.trim();
+  if (!term) return [];
+  const pattern = likePattern(term);
+  const rows = await query<{ report_id: number }>(
+    `SELECT DISTINCT t.report_id
+       FROM tasks t LEFT JOIN report_sections s ON s.id = t.section_id
+      WHERE (s.kind IS NULL OR s.kind <> 'plan')
+        AND ( COALESCE(t.title,'')       ILIKE $1 ESCAPE '\\'
+           OR COALESCE(t.description,'') ILIKE $1 ESCAPE '\\'
+           OR COALESCE(t.project,'')     ILIKE $1 ESCAPE '\\' )`,
+    [pattern],
+  );
+  return rows.map((r) => Number(r.report_id));
+}
+
 /** 관리자/그룹장 목록: 특정 날짜의 (그룹 or 전체) 구성원 보고 현황 */
 /** 한 사용자가 그룹장인 모든 그룹 id(복수 그룹장 지원). */
 export async function listLedGroupIds(userId: number): Promise<number[]> {
