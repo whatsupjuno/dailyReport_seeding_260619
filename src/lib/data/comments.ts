@@ -161,7 +161,7 @@ export async function addComment(
   authorRole: string,
   body: string,
   parentId?: number | null,
-): Promise<{ id: number; mentions: number[] }> {
+): Promise<{ id: number; mentions: number[]; reportId: number; parentAuthorId: number | null }> {
   const trimmed = body.trim();
   if (trimmed.length === 0) throw new Error("EMPTY");
   if (trimmed.length > 10000) throw new Error("TOO_LONG");
@@ -170,14 +170,17 @@ export async function addComment(
     const ctx = await c.query<{ report_id: number }>(`SELECT report_id FROM tasks WHERE id=$1`, [taskId]);
     if (!ctx.rows[0]) throw new Error("NOT_FOUND");
     let parent: number | string | null = null;
+    // 알림 수신자(스레드 상대편)용: '내가 답글을 단 부모 댓글'의 작성자(평탄화 전, 클릭한 부모 기준).
+    let parentAuthorId: number | null = null;
     if (parentId != null) {
       // 같은 업무의 댓글만 부모로 허용. 부모가 자식이면 그 root(parent_id)로 평탄화 → 항상 1단계.
-      const p = await c.query<{ id: number; parent_id: number | null }>(
-        `SELECT id, parent_id FROM task_comments WHERE id=$1 AND task_id=$2`,
+      const p = await c.query<{ id: number; parent_id: number | null; author_user_id: number | null }>(
+        `SELECT id, parent_id, author_user_id FROM task_comments WHERE id=$1 AND task_id=$2`,
         [parentId, taskId],
       );
       if (!p.rows[0]) throw new Error("INVALID_PARENT");
       parent = p.rows[0].parent_id ?? p.rows[0].id;
+      parentAuthorId = p.rows[0].author_user_id == null ? null : Number(p.rows[0].author_user_id);
     }
     const r = await c.query<{ id: number }>(
       `INSERT INTO task_comments(task_id, report_id, author_user_id, author_role, body, parent_id, mentions)
@@ -190,7 +193,7 @@ export async function addComment(
        ON CONFLICT (user_id, task_id) DO UPDATE SET last_read_at=now()`,
       [authorUserId, taskId],
     );
-    return { id: r.rows[0].id, mentions };
+    return { id: r.rows[0].id, mentions, reportId: Number(ctx.rows[0].report_id), parentAuthorId };
   });
 }
 

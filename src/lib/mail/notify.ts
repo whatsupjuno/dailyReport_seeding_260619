@@ -1,9 +1,11 @@
-import { query } from "../db";
+import { query, queryOne } from "../db";
 import { env } from "../env";
 import { mailer } from "./index";
 import type { MailMessage } from "./transport";
 import { getUserById } from "../data/users";
-import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail, timePolicyChangedEmail } from "./templates";
+import { getReviewOwner } from "../data/review";
+import { computeCommentRecipients } from "../domain/comment-recipients";
+import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail, timePolicyChangedEmail, commentEmail } from "./templates";
 
 // 이벤트(액션) 기반 이메일 알림 — 상태변경 tx '커밋 후' best-effort 호출.
 // notifications를 단일 원장으로: 항상 1행(sent/failed/skipped). id는 bigint(런타임 문자열)이므로 비교는 String 정규화.
@@ -108,5 +110,73 @@ export async function notifyLeaderReview(owner: Owner, reportId: number, kind: "
     await record(leader.id, reportId, kind, tpl(leader.email, leader.name, owner.name, leaderLink(reportId)));
   } catch {
     /* best-effort */
+  }
+}
+
+/** 댓글 본문 발췌 — 공백 정규화 후 최대 길이 컷(메일 미리보기용). */
+function excerpt(body: string, max = 160): string {
+  const s = (body ?? "").trim().replace(/\s+/g, " ");
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+export interface CommentNotifyParams {
+  taskId: number;
+  reportId: number;
+  /** 댓글 작성자 user id */
+  authorId: number;
+  /** 댓글 본문(발췌용) */
+  body: string;
+  /** 대댓글 여부 */
+  isReply: boolean;
+  /** 대댓글일 때 부모 댓글 작성자 id(없으면 null) */
+  parentAuthorId: number | null;
+  /** task_comments.mentions — 서버 해석된 멘션 대상 id(본문 재파싱 금지) */
+  mentions: number[];
+}
+
+/**
+ * 댓글/대댓글/@멘션 → 수신자에게 즉시 메일 + notifications INSERT(승인/반려 즉시발송 미러링).
+ * 수신자 규칙은 computeCommentRecipients(순수 로직)에 위임. 비활성=skipped 기록, 이메일 없음=미기록.
+ * 수신자별 try/catch + 전체 try/catch로 비차단(메일 실패가 댓글 저장을 깨뜨리지 않음).
+ */
+export async function notifyComment(params: CommentNotifyParams): Promise<void> {
+  try {
+    const { taskId, reportId, authorId, body, isReply, parentAuthorId, mentions } = params;
+    const owner = await getReviewOwner(reportId);
+    if (!owner) return;
+    const author = await getUserById(authorId);
+    const authorName = author?.name ?? "(작성자)";
+    const taskRow = await queryOne<{ title: string }>(`SELECT title FROM tasks WHERE id=$1`, [taskId]);
+    const taskTitle = taskRow?.title ?? "업무";
+    const date = await reportDate(reportId);
+    const snippet = excerpt(body);
+
+    const recipients = computeCommentRecipients({
+      authorId,
+      ownerId: owner.user_id,
+      reviewerId: owner.leader_user_id ?? null,
+      isReply,
+      parentAuthorId,
+      mentions: mentions ?? [],
+    });
+
+    for (const r of recipients) {
+      try {
+        const u = await getUserById(r.userId);
+        if (!u) continue;
+        if (!u.active) {
+          await skip(r.userId, reportId, r.kind, "recipient inactive");
+          continue;
+        }
+        if (!u.email) continue; // 이메일 없으면 미기록(기존 패턴)
+        // 수신자가 보고서 owner면 작성 화면(/report/날짜), 아니면 검수 화면(/review/리포트)
+        const link = String(r.userId) === String(owner.user_id) ? empLink(date) : leaderLink(reportId);
+        await record(u.id, reportId, r.kind, commentEmail(u.email, u.name, r.kind, authorName, taskTitle, snippet, link));
+      } catch {
+        /* 수신자 1명 실패가 나머지 수신자를 막지 않음 */
+      }
+    }
+  } catch {
+    /* best-effort: 알림 실패가 댓글 저장을 깨뜨리지 않음 */
   }
 }
