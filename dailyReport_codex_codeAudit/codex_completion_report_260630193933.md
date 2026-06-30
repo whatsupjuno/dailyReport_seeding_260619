@@ -10,6 +10,7 @@ P0 운영 안전, OTP, 문맥 검색 미구현 항목을 제외한 코드 감사
 
 - 대상 브랜치: `codex/audit-fixes-260630`
 - PR base: GitHub 기본 브랜치 `main`
+- PR: https://github.com/whatsupjuno/dailyReport_seeding_260619/pull/1
 - 계획서: `dailyReport_codex_codeAudit/codex_fix_plan_260630182707.md`
 - 감사 보고서: `dailyReport_codex_codeAudit/codex_audit_report_260630181619.md`
 - 제외: P0 운영 안전, OTP, 문맥 검색 미구현
