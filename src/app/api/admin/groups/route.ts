@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiUser, badRequest, conflict, forbidden, unauthorized } from "@/lib/auth/api";
 import { createGroup } from "@/lib/data/admin";
+import { parseGroupBody } from "./body";
 
 /** 그룹 생성 — 관리자 전용 */
 export async function POST(req: Request) {
@@ -8,23 +9,19 @@ export async function POST(req: Request) {
   if (!user) return unauthorized();
   if (user.role !== "admin") return forbidden();
 
-  const body = (await req.json().catch(() => ({}))) as { name?: string; leaderId?: number | null; isAi?: boolean; writeStart?: string; writeEnd?: string; submitDue?: string | null; inviteAt?: string | null };
-  if (!body.name?.trim()) return badRequest("그룹명을 입력해 주세요.");
-  const HM = /^([01]?\d|2[0-3]):[0-5]\d$/;
-  if (body.writeStart && !HM.test(body.writeStart)) return badRequest("작성 시작 시각 형식이 올바르지 않습니다.");
-  if (body.writeEnd && !HM.test(body.writeEnd)) return badRequest("작성 종료 시각 형식이 올바르지 않습니다.");
-  if (body.submitDue && !HM.test(body.submitDue)) return badRequest("자동제출 시각 형식이 올바르지 않습니다.");
-  if (body.inviteAt && !HM.test(body.inviteAt)) return badRequest("작성 요청 메일 시각 형식이 올바르지 않습니다.");
+  const parsed = parseGroupBody(await req.json().catch(() => null));
+  if (!parsed.ok) return badRequest(parsed.error);
+  const { body } = parsed;
 
   try {
     const res = await createGroup({
-      name: body.name.trim(),
-      leaderId: body.leaderId ?? null,
-      isAi: !!body.isAi,
+      name: body.name,
+      leaderId: body.leaderId,
+      isAi: body.isAi ?? false,
       writeStart: body.writeStart,
       writeEnd: body.writeEnd,
-      submitDue: body.submitDue ?? null,
-      inviteAt: body.inviteAt ?? null,
+      submitDue: body.submitDue,
+      inviteAt: body.inviteAt,
     });
     return NextResponse.json({ ok: true, id: res.id });
   } catch (e) {

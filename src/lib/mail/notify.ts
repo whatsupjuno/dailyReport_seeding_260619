@@ -4,6 +4,7 @@ import { mailer } from "./index";
 import type { MailMessage } from "./transport";
 import { getUserById } from "../data/users";
 import { getReviewOwner } from "../data/review";
+import { allowedCommentRecipientIds } from "../data/comments";
 import { computeCommentRecipients } from "../domain/comment-recipients";
 import { rejectEmail, approvedEmail, reviewRequestEmail, resubmitReviewEmail, planReviewRequestEmail, timePolicyChangedEmail, commentEmail } from "./templates";
 
@@ -136,7 +137,8 @@ export interface CommentNotifyParams {
 
 /**
  * 댓글/대댓글/@멘션 → 수신자에게 즉시 메일 + notifications INSERT(승인/반려 즉시발송 미러링).
- * 수신자 규칙은 computeCommentRecipients(순수 로직)에 위임. 비활성=skipped 기록, 이메일 없음=미기록.
+ * 수신자 규칙은 computeCommentRecipients(순수 로직)에 위임하고, 발송 직전 댓글 열람권을 재검증한다.
+ * 비활성=skipped 기록, 이메일 없음=미기록.
  * 수신자별 try/catch + 전체 try/catch로 비차단(메일 실패가 댓글 저장을 깨뜨리지 않음).
  */
 export async function notifyComment(params: CommentNotifyParams): Promise<void> {
@@ -150,6 +152,7 @@ export async function notifyComment(params: CommentNotifyParams): Promise<void> 
     const taskTitle = taskRow?.title ?? "업무";
     const date = await reportDate(reportId);
     const snippet = excerpt(body);
+    const allowedRecipients = await allowedCommentRecipientIds(reportId);
 
     const recipients = computeCommentRecipients({
       authorId,
@@ -162,6 +165,7 @@ export async function notifyComment(params: CommentNotifyParams): Promise<void> 
 
     for (const r of recipients) {
       try {
+        if (!allowedRecipients.has(Number(r.userId))) continue;
         const u = await getUserById(r.userId);
         if (!u) continue;
         if (!u.active) {

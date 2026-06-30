@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { query, queryOne, tx } from "../db";
 
 // 이메일 형식 검증(이중 @ 등 잘못된 형식 차단) — 정책: 저장되는 이메일은 항상 유효 형식이어야 함.
@@ -13,12 +14,14 @@ export function resolveEmail(loginId: string, email?: string): string {
   return isValidEmail(lid) ? lid : `${lid}@company.com`;
 }
 
-async function assertAssignableLeader(leaderId: number | null | undefined): Promise<void> {
+type QueryClient = Pick<PoolClient, "query">;
+
+async function assertAssignableLeader(leaderId: number | null | undefined, c?: QueryClient): Promise<void> {
   if (leaderId == null) return;
-  const m = await queryOne<{ active: boolean; role: string }>(
-    `SELECT active, role FROM users WHERE id=$1`,
-    [leaderId],
-  );
+  const sql = `SELECT active, role FROM users WHERE id=$1${c ? " FOR UPDATE" : ""}`;
+  const m = c
+    ? (await c.query<{ active: boolean; role: string }>(sql, [leaderId])).rows[0]
+    : await queryOne<{ active: boolean; role: string }>(sql, [leaderId]);
   if (!m) throw new Error("LEADER_NOT_ACTIVE");
   if (!m.active) throw new Error("LEADER_NOT_ACTIVE");
   if (m.role !== "group_leader" && m.role !== "admin") throw new Error("LEADER_NOT_ASSIGNABLE");
@@ -118,15 +121,19 @@ export interface GroupPolicyInput {
 export async function createGroup(input: { name: string; leaderId?: number | null } & GroupPolicyInput): Promise<{ id: number }> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
-  const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1)`, [name]);
-  if (dup) throw new Error("DUPLICATE_NAME");
-  await assertAssignableLeader(input.leaderId);
-  const r = await queryOne<{ id: number }>(
-    `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due, invite_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [name, input.leaderId ?? null, !!input.isAi, input.writeStart || "00:00", input.writeEnd || "23:59", input.submitDue || null, input.inviteAt || null],
-  );
-  return { id: r!.id };
+  return tx(async (c) => {
+    const dup = (await c.query<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1)`, [name])).rows[0];
+    if (dup) throw new Error("DUPLICATE_NAME");
+    await assertAssignableLeader(input.leaderId, c);
+    const r = (
+      await c.query<{ id: number }>(
+        `INSERT INTO groups(name, leader_user_id, is_ai_group, write_start, write_end, submit_due, invite_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [name, input.leaderId ?? null, !!input.isAi, input.writeStart || "00:00", input.writeEnd || "23:59", input.submitDue || null, input.inviteAt || null],
+      )
+    ).rows[0];
+    return { id: r.id };
+  });
 }
 
 /**
@@ -139,35 +146,39 @@ export async function updateGroup(
 ): Promise<{ policyChanged: boolean; window: { isAi: boolean; writeStart: string; writeEnd: string; submitDue: string | null; inviteAt: string | null } }> {
   const name = input.name.trim();
   if (!name) throw new Error("NAME_REQUIRED");
-  const cur = await queryOne<{ id: number; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; invite_at: string | null }>(
-    `SELECT id, is_ai_group,
-            to_char(write_start,'HH24:MI') AS write_start, to_char(write_end,'HH24:MI') AS write_end,
-            to_char(submit_due,'HH24:MI') AS submit_due, to_char(invite_at,'HH24:MI') AS invite_at
-       FROM groups WHERE id=$1`,
-    [id],
-  );
-  if (!cur) throw new Error("NOT_FOUND");
-  const dup = await queryOne<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1) AND id<>$2`, [name, id]);
-  if (dup) throw new Error("DUPLICATE_NAME");
-  // 그룹장은 활성 group_leader/admin만 지정 가능(구성원 아니어도). 한 사람이 여러 그룹의 그룹장을 맡을 수 있음.
-  await assertAssignableLeader(input.leaderId);
-  // 미지정 필드는 기존값 유지(부분 수정). submitDue는 빈문자/undefined 구분: undefined=유지, ''=OFF로 해제.
-  const isAi = input.isAi ?? cur.is_ai_group;
-  const writeStart = input.writeStart || cur.write_start;
-  const writeEnd = input.writeEnd || cur.write_end;
-  const submitDue = input.submitDue === undefined ? cur.submit_due : input.submitDue || null;
-  const inviteAt = input.inviteAt === undefined ? cur.invite_at : input.inviteAt || null;
-  await query(
-    `UPDATE groups SET name=$2, leader_user_id=$3, is_ai_group=$4, write_start=$5, write_end=$6, submit_due=$7, invite_at=$8 WHERE id=$1`,
-    [id, name, input.leaderId, isAi, writeStart, writeEnd, submitDue, inviteAt],
-  );
-  const policyChanged =
-    isAi !== cur.is_ai_group ||
-    writeStart !== cur.write_start ||
-    writeEnd !== cur.write_end ||
-    (submitDue ?? null) !== (cur.submit_due ?? null) ||
-    (inviteAt ?? null) !== (cur.invite_at ?? null);
-  return { policyChanged, window: { isAi, writeStart, writeEnd, submitDue: submitDue ?? null, inviteAt: inviteAt ?? null } };
+  return tx(async (c) => {
+    // updateUser와 같은 user -> group 순서로 잠가 교차 수정 시 deadlock 가능성을 낮춘다.
+    await assertAssignableLeader(input.leaderId, c);
+    const cur = (
+      await c.query<{ id: number; is_ai_group: boolean; write_start: string; write_end: string; submit_due: string | null; invite_at: string | null }>(
+        `SELECT id, is_ai_group,
+                to_char(write_start,'HH24:MI') AS write_start, to_char(write_end,'HH24:MI') AS write_end,
+                to_char(submit_due,'HH24:MI') AS submit_due, to_char(invite_at,'HH24:MI') AS invite_at
+           FROM groups WHERE id=$1 FOR UPDATE`,
+        [id],
+      )
+    ).rows[0];
+    if (!cur) throw new Error("NOT_FOUND");
+    const dup = (await c.query<{ id: number }>(`SELECT id FROM groups WHERE lower(name)=lower($1) AND id<>$2`, [name, id])).rows[0];
+    if (dup) throw new Error("DUPLICATE_NAME");
+    // 미지정 필드는 기존값 유지(부분 수정). submitDue는 빈문자/undefined 구분: undefined=유지, ''=OFF로 해제.
+    const isAi = input.isAi ?? cur.is_ai_group;
+    const writeStart = input.writeStart || cur.write_start;
+    const writeEnd = input.writeEnd || cur.write_end;
+    const submitDue = input.submitDue === undefined ? cur.submit_due : input.submitDue || null;
+    const inviteAt = input.inviteAt === undefined ? cur.invite_at : input.inviteAt || null;
+    await c.query(
+      `UPDATE groups SET name=$2, leader_user_id=$3, is_ai_group=$4, write_start=$5, write_end=$6, submit_due=$7, invite_at=$8 WHERE id=$1`,
+      [id, name, input.leaderId, isAi, writeStart, writeEnd, submitDue, inviteAt],
+    );
+    const policyChanged =
+      isAi !== cur.is_ai_group ||
+      writeStart !== cur.write_start ||
+      writeEnd !== cur.write_end ||
+      (submitDue ?? null) !== (cur.submit_due ?? null) ||
+      (inviteAt ?? null) !== (cur.invite_at ?? null);
+    return { policyChanged, window: { isAi, writeStart, writeEnd, submitDue: submitDue ?? null, inviteAt: inviteAt ?? null } };
+  });
 }
 
 /** 그룹 삭제. 구성원의 group_id와 그룹장 FK는 ON DELETE SET NULL로 자동 해제. */
@@ -211,7 +222,7 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<vo
   if (input.loginCode != null && !/^\d{4}$/.test(input.loginCode)) throw new Error("INVALID_CODE");
   if (input.email != null && !isValidEmail(input.email)) throw new Error("INVALID_EMAIL");
   await tx(async (c) => {
-    const cur = (await c.query<{ active: boolean }>(`SELECT active FROM users WHERE id=$1`, [id])).rows[0];
+    const cur = (await c.query<{ active: boolean }>(`SELECT active FROM users WHERE id=$1 FOR UPDATE`, [id])).rows[0];
     if (!cur) throw new Error("NOT_FOUND");
     await c.query(
       `UPDATE users SET name=$2, role=$3, group_id=$4, active=$5, report_required=COALESCE($6, report_required), login_code=COALESCE($7, login_code), email=COALESCE($8, email) WHERE id=$1`,

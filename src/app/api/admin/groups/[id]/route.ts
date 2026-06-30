@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { apiUser, badRequest, conflict, forbidden, parseId, unauthorized } from "@/lib/auth/api";
 import { deleteGroup, updateGroup } from "@/lib/data/admin";
 import { notifyTimePolicyChanged } from "@/lib/mail/notify";
+import { parseGroupBody } from "../body";
 
 /** 그룹 정보 수정(이름·그룹장) — 관리자 전용 */
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -12,18 +13,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const groupId = parseId(id);
   if (groupId == null) return badRequest("잘못된 그룹 ID입니다.");
 
-  const body = (await req.json().catch(() => ({}))) as { name?: string; leaderId?: number | null; isAi?: boolean; writeStart?: string; writeEnd?: string; submitDue?: string | null; inviteAt?: string | null };
-  if (!body.name?.trim()) return badRequest("그룹명을 입력해 주세요.");
-  const HM = /^([01]?\d|2[0-3]):[0-5]\d$/;
-  if (body.writeStart && !HM.test(body.writeStart)) return badRequest("작성 시작 시각 형식이 올바르지 않습니다.");
-  if (body.writeEnd && !HM.test(body.writeEnd)) return badRequest("작성 종료 시각 형식이 올바르지 않습니다.");
-  if (body.submitDue && !HM.test(body.submitDue)) return badRequest("자동제출 시각 형식이 올바르지 않습니다.");
-  if (body.inviteAt && !HM.test(body.inviteAt)) return badRequest("작성 요청 메일 시각 형식이 올바르지 않습니다.");
+  const parsed = parseGroupBody(await req.json().catch(() => null));
+  if (!parsed.ok) return badRequest(parsed.error);
+  const { body } = parsed;
 
   try {
     const res = await updateGroup(groupId, {
-      name: body.name.trim(),
-      leaderId: body.leaderId ?? null,
+      name: body.name,
+      leaderId: body.leaderId,
       isAi: body.isAi,
       writeStart: body.writeStart,
       writeEnd: body.writeEnd,
