@@ -43,6 +43,7 @@ Claude Code가 즉시 확인할 항목은 3개다.
 - Merge commit: `1820611e85e92b9b799e06c9840650bb00715c08`
 - 병합 전 main 최신 commit: `93e42ca`
 - 병합 직전 PR branch 최신 commit: `a54723e`
+- 이 handoff 문서는 운영 배포 후 main에 추가한 문서 전용 변경이다. 운영 런타임 배포 기준은 `1820611`이고, 이 문서 추가 commit은 런타임 코드 변경이 아니다.
 
 PR branch 주요 commit:
 
