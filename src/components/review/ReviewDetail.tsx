@@ -55,6 +55,7 @@ export interface ReviewView {
   pending: boolean; // 검수대기(전체 승인/반려 가능)
   reviewable: boolean; // 계획제출 ∨ 검수대기(행 반려 가능)
   canAct: boolean; // 액션(승인/반려/행반려) 권한. false면 관리자 열람 전용 → 액션 UI 숨김
+  canRowReject: boolean; // 행 반려 가능. 셀프 승인 폴백 admin은 서버 정책상 false.
   canPlanReject: boolean; // 계획 반려 가능(계획제출 + 그룹장, 셀프 제외)
   openRejectCount: number;
   heldTaskCount: number;
@@ -113,7 +114,7 @@ function ReviewTaskRow({ t, zone, ctx }: { t: ReviewTask; zone: string; ctx: Row
           {(t.plannedMin || t.actualMin) && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 3 }} className="tnum">{t.plannedMin ? `계획 ${t.plannedMin}분` : ""}{t.actualMin ? ` / 실제 ${t.actualMin}분` : ""}</div>}
         </div>
         <CommentButton count={t.commentCount} unread={t.commentUnread} leaderUnread={t.commentLeaderUnread} onClick={() => ctx.openDrawer(t, zone)} />
-        {view.canAct && view.reviewable && !rejected && ctx.rowRejectId !== t.id && (
+        {view.canRowReject && view.reviewable && !rejected && ctx.rowRejectId !== t.id && (
           <button onClick={() => { ctx.setRowRejectId(t.id); ctx.setRowComment(""); }} data-testid={`row-reject-${t.id}`} style={{ flex: "none", background: "#fff", border: "1px solid #F5C2C2", color: "#DC2626", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "5px 11px", marginTop: 1 }}>반려</button>
         )}
       </div>
@@ -136,7 +137,7 @@ function ReviewTaskRow({ t, zone, ctx }: { t: ReviewTask; zone: string; ctx: Row
             <div data-testid="row-reject-band" style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#B91C1C", background: "#FCEBEB", border: "1px solid #F5C2C2", borderRadius: 7, padding: "7px 10px", marginTop: 8 }}>
               <span style={{ fontWeight: 700 }}>↩ 반려</span>
               <span style={{ flex: 1 }}>{t.rejectComment}{t.rejectedBy ? ` · ${t.rejectedBy}` : ""}</span>
-              {view.canAct && view.reviewable && t.rejectedById === view.reviewerId && (
+              {view.canRowReject && view.reviewable && t.rejectedById === view.reviewerId && (
                 <button onClick={() => ctx.undoRowReject(t.id)} disabled={busy} data-testid={`row-reject-undo-${t.id}`} style={{ flex: "none", background: "none", border: "none", color: "#B91C1C", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>취소</button>
               )}
             </div>
@@ -499,7 +500,7 @@ export default function ReviewDetail({ view }: { view: ReviewView }) {
         <div style={{ position: "sticky", bottom: 0, background: "rgba(255,255,255,.94)", borderTop: "1px solid #E2E5EB", padding: "12px 24px" }} data-testid="plan-review-bar">
           <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "#6B7280" }}>
             <span style={{ fontWeight: 600, color: "#3A4150" }}>계획 제출됨</span>
-            <span>개별 업무 반려 또는 계획 전체 반려가 가능합니다.</span>
+            <span>{view.canRowReject || view.canPlanReject ? "검수 가능한 항목을 확인해 주세요." : "승인만 가능합니다."}</span>
             {view.openRejectCount > 0 && <span style={{ color: "#B91C1C", fontWeight: 600 }} data-testid="open-reject-count">행 반려 {view.openRejectCount}건</span>}
             {view.canPlanReject && (
               <button onClick={() => { setPlanComment(""); setPlanRejectOpen(true); }} disabled={busy} data-testid="plan-reject-open" style={{ marginLeft: "auto", height: 38, padding: "0 18px", border: "1px solid #F5C2C2", borderRadius: 8, background: "#fff", color: "#DC2626", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>계획 반려</button>

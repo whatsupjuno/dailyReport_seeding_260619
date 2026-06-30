@@ -1,11 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { extname, join, basename } from "node:path";
+import type { PoolClient } from "pg";
 import { env } from "../env";
-import { query, queryOne } from "../db";
+import { query, queryOne, tx } from "../db";
 import { FINAL_LOCKED } from "../domain/status";
 
-// 최종 잠금만 첨부 차단. '검수대기'는 승인 전까지 작성자 편집 허용 → 첨부 가능(report-mutations와 단일 기준).
+// 제출 이후 잠금은 FINAL_LOCKED(report-mutations와 단일 기준).
+
+function isLockedReportStatus(status: string): boolean {
+  return (FINAL_LOCKED as readonly string[]).includes(status);
+}
 
 export interface AttachmentRow {
   id: number;
@@ -17,19 +22,22 @@ export interface AttachmentRow {
   comment: string | null;
 }
 
-/** task가 편집 가능한지(소유자 + 미제출 + 섹션 미잠금) 확인 */
-async function assertEditableTask(taskId: number, userId: number) {
+/** task가 편집 가능한지(소유자 + 미제출 + 섹션 미잠금) 확인하고 보고서 행을 잠근다. */
+async function assertEditableTask(c: PoolClient, taskId: number, userId: number) {
   // v2는 section_id=NULL이므로 LEFT JOIN(섹션 없으면 locked=false 취급).
-  const row = await queryOne<{ user_id: number; status: string; locked: boolean | null }>(
+  const row = (
+    await c.query<{ user_id: number; status: string; locked: boolean | null }>(
     `SELECT r.user_id, r.status, s.locked
        FROM tasks t JOIN daily_reports r ON r.id=t.report_id
        LEFT JOIN report_sections s ON s.id=t.section_id
-      WHERE t.id=$1`,
+      WHERE t.id=$1
+      FOR UPDATE OF r`,
     [taskId],
-  );
+    )
+  ).rows[0];
   if (!row) throw new Error("NOT_FOUND");
   if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if ((FINAL_LOCKED as readonly string[]).includes(row.status) || row.locked === true) throw new Error("LOCKED");
+  if (isLockedReportStatus(row.status) || row.locked === true) throw new Error("LOCKED");
 }
 
 export async function addUrlAttachment(
@@ -38,12 +46,14 @@ export async function addUrlAttachment(
   url: string,
   comment: string | null,
 ): Promise<{ id: number }> {
-  await assertEditableTask(taskId, userId);
-  const r = await queryOne<{ id: number }>(
-    `INSERT INTO task_attachments(task_id, kind, url, comment) VALUES ($1,'url',$2,$3) RETURNING id`,
-    [taskId, url, comment],
-  );
-  return { id: r!.id };
+  return tx(async (c) => {
+    await assertEditableTask(c, taskId, userId);
+    const r = await c.query<{ id: number }>(
+      `INSERT INTO task_attachments(task_id, kind, url, comment) VALUES ($1,'url',$2,$3) RETURNING id`,
+      [taskId, url, comment],
+    );
+    return { id: r.rows[0].id };
+  });
 }
 
 export async function addFileAttachment(
@@ -52,22 +62,24 @@ export async function addFileAttachment(
   file: File,
   comment: string | null,
 ): Promise<{ id: number }> {
-  await assertEditableTask(taskId, userId);
   if (file.size === 0) throw new Error("EMPTY_FILE");
   if (file.size > env.maxUploadBytes) throw new Error("TOO_LARGE");
 
-  await mkdir(env.uploadDir, { recursive: true });
-  const safeExt = extname(file.name).slice(0, 12).replace(/[^.\w가-힣-]/g, "");
-  const stored = `${Date.now()}_${randomBytes(8).toString("hex")}${safeExt}`;
-  const buf = Buffer.from(await file.arrayBuffer());
-  await writeFile(join(env.uploadDir, stored), buf);
+  return tx(async (c) => {
+    await assertEditableTask(c, taskId, userId);
+    await mkdir(env.uploadDir, { recursive: true });
+    const safeExt = extname(file.name).slice(0, 12).replace(/[^.\w가-힣-]/g, "");
+    const stored = `${Date.now()}_${randomBytes(8).toString("hex")}${safeExt}`;
+    const buf = Buffer.from(await file.arrayBuffer());
+    await writeFile(join(env.uploadDir, stored), buf);
 
-  const r = await queryOne<{ id: number }>(
-    `INSERT INTO task_attachments(task_id, kind, file_name, storage_path, comment)
-     VALUES ($1,'file',$2,$3,$4) RETURNING id`,
-    [taskId, basename(file.name).slice(0, 200), stored, comment],
-  );
-  return { id: r!.id };
+    const r = await c.query<{ id: number }>(
+      `INSERT INTO task_attachments(task_id, kind, file_name, storage_path, comment)
+       VALUES ($1,'file',$2,$3,$4) RETURNING id`,
+      [taskId, basename(file.name).slice(0, 200), stored, comment],
+    );
+    return { id: r.rows[0].id };
+  });
 }
 
 /** 다운로드 인가용: 첨부 + 보고서 소유자/그룹 정보 */
@@ -112,15 +124,20 @@ export interface CommAttachmentRow {
   comment: string | null;
 }
 
-/** 커뮤니케이션이 편집 가능한지(소유자 + 미제출) — 섹션 없음 */
-async function assertEditableComm(commId: number, userId: number) {
-  const row = await queryOne<{ user_id: number; status: string }>(
-    `SELECT r.user_id, r.status FROM communications cm JOIN daily_reports r ON r.id=cm.report_id WHERE cm.id=$1`,
+/** 커뮤니케이션이 편집 가능한지(소유자 + 미제출) 확인하고 보고서 행을 잠근다. */
+async function assertEditableComm(c: PoolClient, commId: number, userId: number) {
+  const row = (
+    await c.query<{ user_id: number; status: string }>(
+    `SELECT r.user_id, r.status
+       FROM communications cm JOIN daily_reports r ON r.id=cm.report_id
+      WHERE cm.id=$1
+      FOR UPDATE OF r`,
     [commId],
-  );
+    )
+  ).rows[0];
   if (!row) throw new Error("NOT_FOUND");
   if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if ((FINAL_LOCKED as readonly string[]).includes(row.status)) throw new Error("LOCKED");
+  if (isLockedReportStatus(row.status)) throw new Error("LOCKED");
 }
 
 export async function addCommFileAttachment(
@@ -129,21 +146,23 @@ export async function addCommFileAttachment(
   file: File,
   comment: string | null,
 ): Promise<{ id: number }> {
-  await assertEditableComm(commId, userId);
   if (file.size === 0) throw new Error("EMPTY_FILE");
   if (file.size > env.maxUploadBytes) throw new Error("TOO_LARGE");
 
-  await mkdir(env.uploadDir, { recursive: true });
-  const safeExt = extname(file.name).slice(0, 12).replace(/[^.\w가-힣-]/g, "");
-  const stored = `${Date.now()}_${randomBytes(8).toString("hex")}${safeExt}`;
-  await writeFile(join(env.uploadDir, stored), Buffer.from(await file.arrayBuffer()));
+  return tx(async (c) => {
+    await assertEditableComm(c, commId, userId);
+    await mkdir(env.uploadDir, { recursive: true });
+    const safeExt = extname(file.name).slice(0, 12).replace(/[^.\w가-힣-]/g, "");
+    const stored = `${Date.now()}_${randomBytes(8).toString("hex")}${safeExt}`;
+    await writeFile(join(env.uploadDir, stored), Buffer.from(await file.arrayBuffer()));
 
-  const r = await queryOne<{ id: number }>(
-    `INSERT INTO communication_attachments(communication_id, file_name, storage_path, comment)
-     VALUES ($1,$2,$3,$4) RETURNING id`,
-    [commId, basename(file.name).slice(0, 200), stored, comment],
-  );
-  return { id: r!.id };
+    const r = await c.query<{ id: number }>(
+      `INSERT INTO communication_attachments(communication_id, file_name, storage_path, comment)
+       VALUES ($1,$2,$3,$4) RETURNING id`,
+      [commId, basename(file.name).slice(0, 200), stored, comment],
+    );
+    return { id: r.rows[0].id };
+  });
 }
 
 /** 커뮤니케이션 기록에 URL(링크) 첨부 */
@@ -153,16 +172,18 @@ export async function addCommUrlAttachment(
   url: string,
   comment: string | null,
 ): Promise<{ id: number }> {
-  await assertEditableComm(commId, userId);
   const u = url.trim();
   if (!/^https?:\/\//i.test(u)) throw new Error("BAD_URL");
   if (u.length > 2000) throw new Error("BAD_URL");
-  const r = await queryOne<{ id: number }>(
-    `INSERT INTO communication_attachments(communication_id, url, comment)
-     VALUES ($1,$2,$3) RETURNING id`,
-    [commId, u, comment],
-  );
-  return { id: r!.id };
+  return tx(async (c) => {
+    await assertEditableComm(c, commId, userId);
+    const r = await c.query<{ id: number }>(
+      `INSERT INTO communication_attachments(communication_id, url, comment)
+       VALUES ($1,$2,$3) RETURNING id`,
+      [commId, u, comment],
+    );
+    return { id: r.rows[0].id };
+  });
 }
 
 /** 보고서의 커뮤니케이션 첨부 (communication_id별 그룹핑용) */
@@ -197,18 +218,23 @@ export async function getCommAttachmentWithOwner(attId: number) {
 
 /** 커뮤니케이션 첨부 삭제(소유자 + 미제출). 파일은 남겨두되 레코드 제거(고아 파일은 운영 정리). */
 export async function deleteCommAttachment(attId: number, userId: number): Promise<void> {
-  const row = await queryOne<{ comm_id: number; user_id: number; status: string }>(
-    `SELECT a.communication_id AS comm_id, r.user_id, r.status
-       FROM communication_attachments a
-       JOIN communications cm ON cm.id=a.communication_id
-       JOIN daily_reports r ON r.id=cm.report_id
-      WHERE a.id=$1`,
-    [attId],
-  );
-  if (!row) throw new Error("NOT_FOUND");
-  if (row.user_id !== userId) throw new Error("FORBIDDEN");
-  if ((FINAL_LOCKED as readonly string[]).includes(row.status)) throw new Error("LOCKED");
-  await query(`DELETE FROM communication_attachments WHERE id=$1`, [attId]);
+  await tx(async (c) => {
+    const row = (
+      await c.query<{ comm_id: number; user_id: number; status: string }>(
+        `SELECT a.communication_id AS comm_id, r.user_id, r.status
+           FROM communication_attachments a
+           JOIN communications cm ON cm.id=a.communication_id
+           JOIN daily_reports r ON r.id=cm.report_id
+          WHERE a.id=$1
+          FOR UPDATE OF r`,
+        [attId],
+      )
+    ).rows[0];
+    if (!row) throw new Error("NOT_FOUND");
+    if (row.user_id !== userId) throw new Error("FORBIDDEN");
+    if (isLockedReportStatus(row.status)) throw new Error("LOCKED");
+    await c.query(`DELETE FROM communication_attachments WHERE id=$1`, [attId]);
+  });
 }
 
 export const UPLOAD_DIR = () => env.uploadDir;

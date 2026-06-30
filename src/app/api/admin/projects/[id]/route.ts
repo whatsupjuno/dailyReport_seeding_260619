@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { apiUser, badRequest, forbidden, parseId, unauthorized } from "@/lib/auth/api";
 import { updateProject, removeProject, PROJECT_STATUSES, type ProjectStatus } from "@/lib/data/projects";
 
+type ProjectBody = Record<string, unknown>;
+
+function objectBody(raw: unknown): ProjectBody {
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw as ProjectBody : {};
+}
+
+function parseOwnerUserId(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
+  if (typeof raw === "string") return parseId(raw);
+  return null;
+}
+
 /** 프로젝트 수정 — 관리자 전용. */
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await apiUser();
@@ -11,27 +23,26 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const projectId = parseId(id);
   if (projectId == null) return badRequest("잘못된 프로젝트 ID입니다.");
 
-  const body = (await req.json().catch(() => ({}))) as {
-    name?: string;
-    custName?: string;
-    custContact?: string | null;
-    ownerUserId?: number | null;
-    status?: ProjectStatus;
-    note?: string | null;
-  };
-  if (!body.name?.trim()) return badRequest("프로젝트명을 입력해 주세요.");
-  if (!body.custName?.trim()) return badRequest("고객명을 입력해 주세요.");
-  if (body.ownerUserId == null) return badRequest("담당자를 선택해 주세요.");
-  if (body.status != null && !PROJECT_STATUSES.includes(body.status)) return badRequest("알 수 없는 상태입니다.");
+  const body = objectBody(await req.json().catch(() => ({})));
+  if (typeof body.name !== "string" || !body.name.trim()) return badRequest("프로젝트명을 입력해 주세요.");
+  if (typeof body.custName !== "string" || !body.custName.trim()) return badRequest("고객명을 입력해 주세요.");
+  if (body.custContact != null && typeof body.custContact !== "string") return badRequest("고객 연락처 형식이 올바르지 않습니다.");
+  if (body.note != null && typeof body.note !== "string") return badRequest("메모 형식이 올바르지 않습니다.");
+  const ownerUserId = parseOwnerUserId(body.ownerUserId);
+  if (ownerUserId == null) return badRequest("담당자를 선택해 주세요.");
+  if (body.status != null && (typeof body.status !== "string" || !PROJECT_STATUSES.includes(body.status as ProjectStatus))) return badRequest("알 수 없는 상태입니다.");
+  const status = typeof body.status === "string" ? body.status as ProjectStatus : undefined;
+  const custContact = typeof body.custContact === "string" ? body.custContact : null;
+  const note = typeof body.note === "string" ? body.note : null;
 
   try {
     await updateProject(projectId, {
       name: body.name.trim(),
       custName: body.custName.trim(),
-      custContact: body.custContact ?? null,
-      ownerUserId: body.ownerUserId,
-      status: body.status,
-      note: body.note ?? null,
+      custContact,
+      ownerUserId,
+      status,
+      note,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {

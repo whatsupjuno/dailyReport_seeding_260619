@@ -113,7 +113,9 @@ export default function CommentDrawer({
   const [mentionFor, setMentionFor] = useState<MentionCtx | null>(null);
   const [mentionQuery, setMentionQuery] = useState("");
 
-  // 작성/답글/수정/삭제 권한 = 서버 canWrite 기준(role 라벨로 막으면 검수권자 관리자의 post가 막혀 무반응; 2026-06-30 버그)
+  // 작성/답글/수정/삭제 권한 = 서버 canWrite(작성자·검수권자=true, 순수 관리자=false)와 일치시킨다.
+  // role 라벨(=="관리자")로 막으면 검수권자인 관리자(그룹장 겸 admin 등)는 composer(=canWrite 기준)는
+  // 보이는데 post가 조용히 막혀 "등록 무반응"이 된다(2026-06-30 버그). canWrite 단일 기준으로 통일.
   const canMutate = canWrite;
 
   async function refetch() {
@@ -142,10 +144,10 @@ export default function CommentDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
-  // @멘션 멤버(실제 조직 사용자) 1회 로드
+  // @멘션 멤버(해당 업무 댓글 열람권자) 로드
   useEffect(() => {
     let alive = true;
-    fetch(`/api/comments/members`)
+    fetch(`/api/comments/members?taskId=${task.id}`)
       .then((r) => r.json())
       .then((d) => {
         if (alive && d.ok) setMembers(d.members ?? []);
@@ -154,7 +156,7 @@ export default function CommentDrawer({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [task.id]);
 
   // ESC로 닫기(브리프 §9)
   useEffect(() => {

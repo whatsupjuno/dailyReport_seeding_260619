@@ -78,26 +78,74 @@ export async function listComments(taskId: number): Promise<CommentRow[]> {
 }
 
 /**
- * @멘션 자동완성용 멤버 목록 — 활성 사용자(데모 이름 아닌 실제 조직 구성원).
+ * 댓글을 볼 수 있는 활성 사용자 집합.
+ * owner, 실제 검수자, admin만 포함한다. 같은 그룹 일반 직원은 현재 commentAccess상 열람권이 없으므로 제외한다.
+ */
+export async function allowedCommentRecipientIds(reportId: number): Promise<Set<number>> {
+  const rows = await query<{ id: number }>(
+    `SELECT DISTINCT u.id
+       FROM daily_reports r
+       JOIN users owner ON owner.id = r.user_id
+       LEFT JOIN groups g ON g.id = owner.group_id
+       JOIN users u
+         ON u.active
+        AND (
+             u.id = owner.id
+          OR u.role = 'admin'
+          OR (u.id = g.leader_user_id AND u.role IN ('group_leader','admin'))
+        )
+      WHERE r.id = $1`,
+    [reportId],
+  );
+  return new Set(rows.map((r) => Number(r.id)));
+}
+
+/**
+ * @멘션 자동완성용 멤버 목록 — 해당 업무 댓글 열람권이 있는 활성 사용자만.
  * 이름 오름차순. login_code 등 민감값은 읽지 않음.
  */
-export async function listMentionMembers(): Promise<MentionMember[]> {
+export async function listMentionMembers(reportId: number): Promise<MentionMember[]> {
   return query<MentionMember>(
-    `SELECT id, name, role FROM users WHERE active ORDER BY name, id`,
+    `SELECT DISTINCT u.id, u.name, u.role
+       FROM daily_reports r
+       JOIN users owner ON owner.id = r.user_id
+       LEFT JOIN groups g ON g.id = owner.group_id
+       JOIN users u
+         ON u.active
+        AND (
+             u.id = owner.id
+          OR u.role = 'admin'
+          OR (u.id = g.leader_user_id AND u.role IN ('group_leader','admin'))
+        )
+      WHERE r.id = $1
+      ORDER BY u.name, u.id`,
+    [reportId],
   );
 }
 
 /**
- * 본문에서 @멘션 토큰을 추출해 활성 사용자 id로 해석(알림 메타).
+ * 본문에서 @멘션 토큰을 추출해 해당 보고서 댓글 열람권이 있는 활성 사용자 id로 해석(알림 메타).
  * 분리 정규식은 디자인과 동일(/@[^\s@.,!?()\[\]{}:;]+/g). 이름 정확일치만 채택.
  * 동명이인은 모두 채택(중복 제거). 클라이언트 신뢰 없이 서버에서 해석.
  */
-export async function resolveMentions(body: string): Promise<number[]> {
+export async function resolveMentions(body: string, reportId: number): Promise<number[]> {
   const names = extractMentionNames(body);
   if (names.length === 0) return [];
   const rows = await query<{ id: number }>(
-    `SELECT id FROM users WHERE active AND name = ANY($1::text[])`,
-    [names],
+    `SELECT DISTINCT u.id
+       FROM daily_reports r
+       JOIN users owner ON owner.id = r.user_id
+       LEFT JOIN groups g ON g.id = owner.group_id
+       JOIN users u
+         ON u.active
+        AND u.name = ANY($2::text[])
+        AND (
+             u.id = owner.id
+          OR u.role = 'admin'
+          OR (u.id = g.leader_user_id AND u.role IN ('group_leader','admin'))
+        )
+      WHERE r.id = $1`,
+    [reportId, names],
   );
   return Array.from(new Set(rows.map((r) => Number(r.id))));
 }
@@ -124,7 +172,12 @@ export async function editComment(
   const trimmed = body.trim();
   if (trimmed.length === 0) throw new Error("EMPTY");
   if (trimmed.length > 10000) throw new Error("TOO_LONG");
-  const mentions = await resolveMentions(trimmed);
+  const meta = await queryOne<{ report_id: number }>(
+    `SELECT report_id FROM task_comments WHERE id = $1 AND author_user_id = $2 AND NOT deleted`,
+    [commentId, authorUserId],
+  );
+  if (!meta) return false;
+  const mentions = await resolveMentions(trimmed, Number(meta.report_id));
   const r = await query<{ id: number }>(
     `UPDATE task_comments
         SET body = $1, edited = true, mentions = $2::bigint[]
@@ -165,10 +218,10 @@ export async function addComment(
   const trimmed = body.trim();
   if (trimmed.length === 0) throw new Error("EMPTY");
   if (trimmed.length > 10000) throw new Error("TOO_LONG");
-  const mentions = await resolveMentions(trimmed);
+  const task = await getTaskContext(taskId);
+  if (!task) throw new Error("NOT_FOUND");
+  const mentions = await resolveMentions(trimmed, task.report_id);
   return tx(async (c) => {
-    const ctx = await c.query<{ report_id: number }>(`SELECT report_id FROM tasks WHERE id=$1`, [taskId]);
-    if (!ctx.rows[0]) throw new Error("NOT_FOUND");
     let parent: number | string | null = null;
     // 알림 수신자(스레드 상대편)용: '내가 답글을 단 부모 댓글'의 작성자(평탄화 전, 클릭한 부모 기준).
     let parentAuthorId: number | null = null;
@@ -185,7 +238,7 @@ export async function addComment(
     const r = await c.query<{ id: number }>(
       `INSERT INTO task_comments(task_id, report_id, author_user_id, author_role, body, parent_id, mentions)
        VALUES ($1,$2,$3,$4,$5,$6,$7::bigint[]) RETURNING id`,
-      [taskId, ctx.rows[0].report_id, authorUserId, authorRole, trimmed, parent, mentions],
+      [taskId, task.report_id, authorUserId, authorRole, trimmed, parent, mentions],
     );
     // 작성자는 자기 댓글을 본 것으로 간주(읽음 워터마크 갱신)
     await c.query(
@@ -193,7 +246,7 @@ export async function addComment(
        ON CONFLICT (user_id, task_id) DO UPDATE SET last_read_at=now()`,
       [authorUserId, taskId],
     );
-    return { id: r.rows[0].id, mentions, reportId: Number(ctx.rows[0].report_id), parentAuthorId };
+    return { id: r.rows[0].id, mentions, reportId: Number(task.report_id), parentAuthorId };
   });
 }
 

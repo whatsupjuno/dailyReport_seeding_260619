@@ -23,7 +23,7 @@ export default defineConfig({
     // 테스트 DB로 앱을 띄움. DB 리셋/시드는 globalSetup에서 수행.
     command: `pnpm exec next dev -p ${PORT}`,
     url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
     env: {
       DATABASE_URL:

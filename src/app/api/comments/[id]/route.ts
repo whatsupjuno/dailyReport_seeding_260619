@@ -1,23 +1,25 @@
 import { NextResponse } from "next/server";
 import { apiUser, badRequest, forbidden, parseId, unauthorized } from "@/lib/auth/api";
-import { editComment, getCommentMeta, softDeleteComment } from "@/lib/data/comments";
+import { commentAccess, editComment, getCommentMeta, softDeleteComment } from "@/lib/data/comments";
+import type { UserRow } from "@/lib/data/users";
 
 const notFound = () => NextResponse.json({ ok: false, error: "댓글을 찾을 수 없습니다." }, { status: 404 });
 
 /**
  * 인가(브리프 §2-3): 댓글이 존재하고, 미삭제이며, 작성자 본인(author_user_id==세션)이고,
- * 세션 role!=='관리자'(admin은 열람 전용)일 때만 수정/삭제 허용.
+ * 해당 업무에 현재 댓글 작성권한이 있을 때만 수정/삭제 허용.
  * 통과면 {ok:true}, 아니면 {error: NextResponse}.
  */
 async function authorizeMutation(
   commentId: number,
-  user: { id: number; role: string },
+  user: UserRow,
 ): Promise<{ ok: true } | { error: NextResponse }> {
   const meta = await getCommentMeta(commentId);
   if (!meta) return { error: notFound() };
-  if (user.role === "admin") return { error: forbidden() }; // 관리자 읽기전용
   if (meta.author_user_id !== user.id) return { error: forbidden() }; // 본인 글만
   if (meta.deleted) return { error: badRequest("이미 삭제된 댓글입니다.") };
+  const access = await commentAccess(meta.task_id, user);
+  if (!access?.canWrite) return { error: forbidden() };
   return { ok: true };
 }
 
@@ -32,8 +34,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const auth = await authorizeMutation(commentId, user);
   if ("error" in auth) return auth.error;
 
-  const payload = (await req.json().catch(() => ({}))) as { body?: string };
-  if (!payload.body?.trim()) return badRequest("댓글을 입력해 주세요.");
+  const payload = (await req.json().catch(() => ({}))) as { body?: unknown };
+  if (typeof payload.body !== "string" || !payload.body.trim()) return badRequest("댓글을 입력해 주세요.");
 
   try {
     const ok = await editComment(commentId, user.id, payload.body);

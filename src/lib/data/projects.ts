@@ -48,39 +48,39 @@ export interface ProjectInput {
   note?: string | null;
 }
 
-function validate(input: ProjectInput): { name: string; custName: string; status: ProjectStatus } {
+function validate(input: ProjectInput): { name: string; custName: string; ownerUserId: number; status: ProjectStatus } {
   const name = (input.name ?? "").trim();
   const custName = (input.custName ?? "").trim();
   if (!name) throw new Error("NAME_REQUIRED");
   if (!custName) throw new Error("CUST_NAME_REQUIRED");
-  if (input.ownerUserId == null) throw new Error("OWNER_REQUIRED");
+  if (!Number.isSafeInteger(input.ownerUserId) || input.ownerUserId <= 0) throw new Error("OWNER_REQUIRED");
   const status = input.status ?? "진행중";
   if (!PROJECT_STATUSES.includes(status)) throw new Error("INVALID_STATUS");
-  return { name, custName, status };
+  return { name, custName, ownerUserId: input.ownerUserId, status };
 }
 
 export async function createProject(input: ProjectInput): Promise<{ id: number }> {
-  const { name, custName, status } = validate(input);
-  const owner = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1`, [input.ownerUserId]);
+  const { name, custName, ownerUserId, status } = validate(input);
+  const owner = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1`, [ownerUserId]);
   if (!owner) throw new Error("OWNER_NOT_FOUND");
   const r = await queryOne<{ id: number }>(
     `INSERT INTO projects(name, cust_name, cust_contact, owner_user_id, status, note)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [name, custName, input.custContact?.trim() || null, input.ownerUserId, status, input.note?.trim() || null],
+    [name, custName, input.custContact?.trim() || null, ownerUserId, status, input.note?.trim() || null],
   );
   return { id: r!.id };
 }
 
 export async function updateProject(id: number, input: ProjectInput): Promise<void> {
-  const { name, custName, status } = validate(input);
+  const { name, custName, ownerUserId, status } = validate(input);
   const cur = await queryOne<{ id: number }>(`SELECT id FROM projects WHERE id=$1`, [id]);
   if (!cur) throw new Error("NOT_FOUND");
-  const owner = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1`, [input.ownerUserId]);
+  const owner = await queryOne<{ id: number }>(`SELECT id FROM users WHERE id=$1`, [ownerUserId]);
   if (!owner) throw new Error("OWNER_NOT_FOUND");
   await query(
     `UPDATE projects SET name=$2, cust_name=$3, cust_contact=$4, owner_user_id=$5, status=$6, note=$7, updated_at=now()
       WHERE id=$1`,
-    [id, name, custName, input.custContact?.trim() || null, input.ownerUserId, status, input.note?.trim() || null],
+    [id, name, custName, input.custContact?.trim() || null, ownerUserId, status, input.note?.trim() || null],
   );
 }
 

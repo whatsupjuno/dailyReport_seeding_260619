@@ -47,10 +47,25 @@ test("계획 제출(1차) → 제출하기(최종) 2단계", async ({ page }) =>
   await page.getByTestId("submit-confirm").click();
   await expect(page.getByTestId("report-status")).toContainText("검수대기");
 
-  // 검수대기(review): 승인 전까지 편집 가능 — 업무 추가 노출, 제출 버튼은 숨김, 안내 배너 표시.
-  await expect(page.getByTestId("add-task")).toHaveCount(1);
-  await expect(page.getByTestId("primary-action")).toHaveCount(0); // 재제출 버튼 없음
-  await expect(page.getByTestId("mode-banner")).toContainText("승인 전까지 수정");
+  // 검수대기: 제출본 잠금 — 화면 컨트롤 숨김 + 서버 우회 요청 차단.
+  await expect(page.getByTestId("todo-readonly")).toBeVisible();
+  await expect(page.getByTestId("add-task")).toHaveCount(0);
+  await expect(page.getByTestId("save-draft")).toHaveCount(0);
+  await expect(page.getByTestId("primary-action")).toHaveCount(0);
+  await expect(page.getByTestId("mode-banner")).toContainText("읽기 전용");
+
+  const reportId = await page.locator("[data-report-id]").getAttribute("data-report-id");
+  const taskId = await page.getByTestId("task-row").first().getAttribute("data-task-id");
+  expect(reportId).toBeTruthy();
+  expect(taskId).toBeTruthy();
+
+  await expect((await page.request.post(`/api/reports/${reportId}/tasks`, { data: { title: "잠금 후 추가" } })).status()).toBe(400);
+  await expect((await page.request.patch(`/api/tasks/${taskId}`, { data: { edit: true, title: "잠금 후 수정" } })).status()).toBe(400);
+  await expect((await page.request.post(`/api/tasks/${taskId}/close`, { data: {} })).status()).toBe(400);
+  await expect((await page.request.post(`/api/tasks/${taskId}/reopen`, { data: {} })).status()).toBe(400);
+  await expect((await page.request.post(`/api/reports/${reportId}/communications`, { data: { type: "메일", counterpart: "QA", summary: "잠금 후 기록" } })).status()).toBe(400);
+  await expect((await page.request.patch(`/api/reports/${reportId}`, { data: { dailyComment: "잠금 후 임시저장" } })).status()).toBe(400);
+  await expect((await page.request.delete(`/api/tasks/${taskId}`, { data: {} })).status()).toBe(400);
 });
 
 test("빈 계획 제출 차단", async ({ page }) => {
