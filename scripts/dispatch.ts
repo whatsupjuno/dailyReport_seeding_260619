@@ -94,12 +94,17 @@ async function main() {
     ).rows;
     let submitted = 0;
     let skipped = 0;
+    let held = 0;
     for (const t of targets) {
-      const r = await autoSubmitReport(t.id);
+      // AI 그룹은 종합본(AI Context 종합) 미첨부면 제출 보류 → 작성중 유지(제출 후 락으로 종합본 유실 방지).
+      const r = await autoSubmitReport(t.id, { requireAiHandoff: g.is_ai_group });
       if (r.done) submitted++;
+      else if (r.held) held++;
       else skipped++;
     }
-    console.log(`[auto_submit:${groupName}] ${targetDate} submitted=${submitted} skipped=${skipped}`);
+    console.log(`[auto_submit:${groupName}] ${targetDate} submitted=${submitted} held=${held} skipped=${skipped}`);
+    if (held > 0)
+      console.warn(`[auto_submit:${groupName}] ⚠ ${held}건 종합본 미첨부로 제출 보류(작성중 유지) — 자동화 마감 미완료, 첨부/백필 후 제출 필요`);
     await c.end();
     return;
   }

@@ -370,7 +370,10 @@ export async function advanceReport(
  * - 휴가는 휴가로 제출(필수유형 빈 사유는 placeholder 보정 — 0007 CHECK 위반 방지).
  * - 미완료 업무는 carryover ON. report_events에 'auto_submitted'(actor NULL) 기록.
  */
-export async function autoSubmitReport(reportId: number): Promise<{ done: boolean; carried: number }> {
+export async function autoSubmitReport(
+  reportId: number,
+  opts: { requireAiHandoff?: boolean } = {},
+): Promise<{ done: boolean; carried: number; held?: boolean }> {
   return tx(async (c) => {
     const cur = (
       await c.query<{ user_id: number; status: ReportStatus }>(
@@ -381,6 +384,20 @@ export async function autoSubmitReport(reportId: number): Promise<{ done: boolea
     if (!cur) return { done: false, carried: 0 };
     if (isLockedReportStatus(cur.status) || cur.status === "반려")
       return { done: false, carried: 0 }; // 멱등/스킵
+    // A(2026-07-01): AI 그룹은 종합본(counterpart='AI Context (종합)') 미첨부면 자동제출 보류 → 작성중 유지.
+    //   09:00 서버 자동제출이 자동화의 종합본 첨부보다 먼저 실행돼 리포트를 잠그면(FINAL_LOCKED)
+    //   종합본을 영영 못 붙이는 사고(2026-06-30 rid 56·57) 방지. 보류하면 자동화/가드가 늦게라도
+    //   첨부→스스로 제출 가능(정상 마감은 활동 유무와 무관하게 항상 종합본을 붙이므로, 보류는 곧 자동화 미완료 신호).
+    if (opts.requireAiHandoff) {
+      const hasHandoff =
+        ((
+          await c.query(
+            `SELECT 1 FROM communications WHERE report_id=$1 AND counterpart=$2 LIMIT 1`,
+            [reportId, "AI Context (종합)"],
+          )
+        ).rowCount ?? 0) > 0;
+      if (!hasHandoff) return { done: false, carried: 0, held: true };
+    }
     await c.query(
       `UPDATE daily_reports
           SET vacation_comment = CASE
