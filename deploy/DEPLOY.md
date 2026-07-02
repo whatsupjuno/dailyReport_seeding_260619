@@ -1,13 +1,13 @@
 # 배포 (운영) — cafe24 / 58.229.163.104
 
-현재 **http://58.229.163.104** 에 라이브. 같은 서버의 기존 앱 `agentnews`(포트 3000, 자체 postgres 컨테이너)와 **격리 공존**.
+현재 **http://58.229.163.104:5001** 에 라이브. 같은 서버의 기존 앱 `agentnews`(포트 3000, 자체 postgres 컨테이너)와 **격리 공존**. (2026-07-03: 80→**5001** 이관 — 포트 80은 다른 서비스용으로 비움. `APP_BASE_URL`도 `:5001`로 갱신.)
 
 ## 구성
 - OS: Ubuntu 22.04, Node 22, pnpm. 앱 경로: `/opt/apps/seeding`
-- **앱**: systemd `seeding.service` → `next start -p 80` (root). `deploy/seeding.service`
+- **앱**: systemd `seeding.service` → `next start -p 5001` (root). `deploy/seeding.service`
 - **DB**: 기존 `agentnews-postgres`(docker, postgres:16) 컨테이너 안에 **별도 DB `seeding` + 롤 `seeding`** 생성(데이터 격리). `DATABASE_URL=postgresql://seeding:***@127.0.0.1:5432/seeding`
 - **메일**: NCP Outbound Mailer 실발송(`MAIL_TRANSPORT=ncp`, 발신 `no-reply@wavle.io`). 검증 완료(requestId 수신).
-- **방화벽**: ufw에 80/tcp 추가(기존 22만 열려 있었음).
+- **방화벽**: ufw에 **5001/tcp** 허용(앱 포트). 80/tcp도 열려 있으나 seeding은 더 이상 80 미사용(80은 다른 서비스용).
 - 시크릿: 서버 `/opt/apps/seeding/.env.local`에만(미커밋). `SESSION_SECRET`(운영 필수)·`DATABASE_URL`·NCP 키.
 
 ## 자동 발송 (cron, KST 평일)
